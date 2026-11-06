@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Fiammetta · Magikal</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2c2 6 9 9 9 17a9 9 0 0 1-18 0c0-4 2-6 3-8 0 3 1 5 3 5 0-5 1-10 3-14z' fill='%23d9480f'/%3E%3Cpath d='M16 14c1 3 4 4 4 8a4 4 0 0 1-8 0c0-3 2-4 4-8z' fill='%23f59f00'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#f6f3ee;--card:#fff;--ink:#1f1b16;--muted:#6f655a;--line:#e6dfd5;--accent:#d9480f;--accent2:#f59f00;--good:#2b8a3e;--warn:#e67700;--bad:#c92a2a;--side:#2b2320;--side-ink:#f1e9df;--radius:12px}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent)}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{margin:0 0 8px;line-height:1.2}
+h2{font-size:22px;font-weight:650}
+h3{font-size:15px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-size:12px}
+.muted{color:var(--muted)}.small{font-size:13px}.right{text-align:right}.nowrap{white-space:nowrap}
+.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.side{background:var(--side);color:var(--side-ink);padding:18px 14px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px}
+.brand .flame{width:28px;height:28px;flex:none}
+.brand b{font-size:19px;font-weight:700;letter-spacing:.01em}
+.brand small{display:block;color:#b9ab9c;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{background:none;border:0;color:#d8cdbf;text-align:left;padding:9px 10px;border-radius:8px;cursor:pointer;font-weight:500}
+.nav button:hover{background:rgba(255,255,255,.07);color:#fff}
+.nav button.on{background:var(--accent);color:#fff}
+.side .foot{margin-top:auto;font-size:12px;color:#b9ab9c;padding:8px 10px;line-height:1.6}
+.side .foot button{background:none;border:1px solid #5a4a40;color:#e9ddd0;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;margin-top:6px}
+.main{padding:22px 26px 60px;max-width:1240px;width:100%}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 2px rgba(40,30,20,.04)}
+.card.wide{grid-column:1/-1}
+.kpi{font-size:28px;font-weight:700;letter-spacing:-.01em;margin:2px 0 4px}
+.kpi.sm{font-size:20px}
+.sub{font-size:13px;color:var(--muted)}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:#eee7dd;color:#5b4f44;vertical-align:middle}
+.pill.good{background:#e3f4e6;color:#1f6b31}.pill.warn{background:#fff0d6;color:#9a4f00}.pill.bad{background:#fde3e3;color:#9c1c1c}.pill.plain{background:#f0ebe4}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.tot td{font-weight:700;border-top:2px solid #d8cfc4;background:#fbf9f6}
+tr.sub td{color:var(--muted)}
+tr.stima td{color:#8a6d3b;font-style:italic}
+tr.sec td{background:#f3eee7;font-weight:650;color:#4a3f36;font-size:12.5px;text-transform:uppercase;letter-spacing:.03em}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #cfc5b8;background:#fff;border-radius:8px;padding:6px 11px;cursor:pointer;font-size:13.5px;font-weight:500}
+.btn:hover{border-color:#a89c8e;background:#fbf8f4}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn.primary:hover{background:#c23f0b}
+.btn.sm{padding:3px 8px;font-size:12.5px;border-radius:6px}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn[disabled]{opacity:.5;cursor:default}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 14px}
+.tabs button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;cursor:pointer;font-size:13px}
+.tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field label{font-size:12.5px;color:var(--muted);font-weight:600}
+.field input,.field select,.field textarea{border:1px solid #cfc5b8;border-radius:8px;padding:7px 9px;background:#fff;width:100%}
+.field input:focus,.field select:focus{outline:2px solid #f6c9a8;border-color:var(--accent)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.row .field{flex:1 1 140px;margin-bottom:6px}
+.alert{border-left:4px solid var(--accent2);background:#fff7e6;padding:9px 12px;border-radius:8px;font-size:13.5px;margin:8px 0}
+.alert.bad{border-color:var(--bad);background:#fdeaea}
+.alert.good{border-color:var(--good);background:#eaf6ec}
+.login{min-height:100vh;display:grid;place-items:center;padding:20px}
+.login-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px 26px;width:100%;max-width:380px;box-shadow:0 10px 30px rgba(40,30,20,.08)}
+.login-card h1{font-size:26px}.login-card h1 em{color:var(--accent);font-style:normal}
+.err{color:var(--bad);font-size:13px;min-height:18px;margin:4px 0 10px}
+.loading{padding:60px;text-align:center;color:var(--muted)}
+.modal-bg{position:fixed;inset:0;background:rgba(30,20,10,.45);display:grid;place-items:center;padding:16px;z-index:50}
+.modal{background:#fff;border-radius:14px;padding:20px 22px;width:100%;max-width:520px;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.modal h2{font-size:18px;margin-bottom:12px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 16px;border-radius:999px;font-size:13.5px;z-index:60;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+details.piano{border:1px solid var(--line);border-radius:var(--radius);background:#fff;margin-bottom:10px}
+details.piano>summary{list-style:none;cursor:pointer;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+details.piano>summary::-webkit-details-marker{display:none}
+details.piano>summary .nm{font-weight:650;flex:1 1 200px}
+details.piano .body{padding:0 16px 14px;overflow:auto}
+.bar{height:6px;background:#eee7dd;border-radius:3px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.bar i.good{background:var(--good)}.bar i.warn{background:var(--warn)}.bar i.bad{background:var(--bad)}
+.list{margin:0;padding:0;list-style:none}
+.list li{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
+.list li:last-child{border-bottom:0}
+.list li>div:first-child{flex:1 1 auto;min-width:0}
+.list .d{color:var(--muted);font-size:12.5px}
+.list .right{flex:none}
+.search{border:1px solid #cfc5b8;border-radius:8px;padding:7px 10px;width:100%;max-width:320px}
+.scroll{overflow:auto}
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr}
+  .side{position:sticky;height:auto;flex-direction:row;align-items:center;padding:8px 10px;overflow-x:auto;gap:4px;z-index:10}
+  .brand{padding:0 8px 0 2px}.brand small{display:none}.brand b{font-size:16px}
+  .nav{flex-direction:row}.nav button{padding:7px 10px;white-space:nowrap;font-size:13.5px}
+  .side .foot{display:none}
+  .main{padding:14px 12px 50px}
+  .kpi{font-size:24px}
+}
+</style>
+</head>
+<body>
+<div id="app"><div class="loading">Avvio…</div></div>
+<script>
+// supabase-js: prima la copia locale (supabase.js nel repository), se manca la versione fissata sul CDN
+window.__sbFallback = function () { document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"><\/script>'); };
+</script>
+<script src="supabase.js" onerror="__sbFallback()"></script>
+<script src="config.js"></script>
+<script>
+'use strict';
+if (!window.supabase) { document.getElementById('app').innerHTML = '<div class="loading">Non riesco a caricare la libreria di collegamento al database (supabase-js). Controlla la connessione e ricarica la pagina.</div>'; throw new Error('supabase-js non caricata'); }
+// =====================================================================
+// FIAMMETTA · amministrazione e finanza di Magikal srl · v1
+// Una sola pagina: legge Supabase (copie di sola lettura del gestionale NTS
+// + tabelle dell'app) e scrive solo nelle tabelle dell'app (rate, piani,
+// saldi banca, mappa conti, parametri). Mai nel gestionale.
+// =====================================================================
+const C = window.FIAMMETTA_CONFIG;
+const S = { sb: null, email: '', me: null, view: 'oggi', data: null, loadedAt: 0, modal: null, setPwd: false,
+  filtroRate: 'piani', annoCE: null, mappa: null, cercaConto: '', soloMov: true, busy: false };
+const VISTE = [['oggi', 'Oggi'], ['scadenziario', 'Scadenziario'], ['ce', 'Conto economico'], ['banche', 'Banche e PFN'], ['impostazioni', 'Impostazioni']];
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// de-DE: stesso formato italiano (punto per le migliaia, virgola per i decimali) ma raggruppa anche i numeri a 4 cifre
+const n0 = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
+const n2 = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const eur = v => (v == null || isNaN(v)) ? '–' : n0.format(Math.round(v)) + ' €';
+const eur2 = v => (v == null || isNaN(v)) ? '–' : n2.format(v) + ' €';
+const pct = (a, b) => (!b || a == null) ? '–' : (100 * a / b).toFixed(1).replace('.', ',') + '%';
+const fmtD = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('it-IT') : '–';
+const fmtDT = d => d ? new Date(d).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '–';
+function isoLocal(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return isoLocal(d); }
+function addMonths(iso, n) { const d = new Date(iso + 'T00:00:00'); const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(day, last)); return isoLocal(d); }
+const num = v => { const x = parseFloat(String(v == null ? '' : v).replace(/\./g, '').replace(',', '.')); return isNaN(x) ? null : x; };
+const sum = (arr, f) => arr.reduce((a, r) => a + (Number(f ? f(r) : r) || 0), 0);
+const OGGI = isoLocal();
+let toastT; function toast(msg, ms) { let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); } t.textContent = msg; clearTimeout(toastT); toastT = setTimeout(() => t.remove(), ms || 2800); }
+
+// ---------- Lettura dati ----------
+async function all(table, build) {
+  let out = [], from = 0; const page = 1000;
+  for (;;) {
+    let q = S.sb.from(table).select('*'); if (build) q = build(q);
+    const { data, error } = await q.range(from, from + page - 1);
+    if (error) throw error;
+    out = out.concat(data || []); if (!data || data.length < page) break; from += page;
+  }
+  return out;
+}
+async function loadAll() {
+  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team] = await Promise.all([
+    S.sb.rpc('stato_dati').then(r => { if (r.error) throw r.error; return r.data; }),
+    all('v_ce_mese'), all('v_sp_saldi'), all('v_banche_saldi'),
+    all('v_rate', q => q.order('scadenza').order('n')), all('piani', q => q.order('tipo').order('nome')),
+    all('v_scadenze_aperte', q => q.order('datsca')), all('parametri'),
+    S.sb.from('saldi_banca').select('*').order('data', { ascending: false }).order('banca').limit(80).then(r => { if (r.error) throw r.error; return r.data; }),
+    all('team')
+  ]);
+  const P = {}; par.forEach(p => P[p.chiave] = typeof p.valore === 'number' ? p.valore : num(p.valore));
+  S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team };
+  S.loadedAt = Date.now();
+}
+async function reloadRate() { S.data.rate = await all('v_rate', q => q.order('scadenza').order('n')); S.data.piani = await all('piani', q => q.order('tipo').order('nome')); }
+
+// ---------- Calcoli ----------
+function posizione() {
+  const D = S.data, b = D.banche, sp = D.sp;
+  const cc = b.filter(x => x.categoria === 'cc');
+  const ccAttivi = sum(cc.filter(x => x.saldo > 0), x => x.saldo), scoperti = -sum(cc.filter(x => x.saldo < 0), x => x.saldo);
+  const sbf = sum(b.filter(x => x.categoria === 'sbf'), x => x.saldo), acc = sum(b.filter(x => x.categoria === 'accantonamento'), x => x.saldo);
+  const cassa = sum(b.filter(x => x.categoria === 'cassa'), x => x.saldo);
+  const carte = sum(sp.filter(x => x.voce === 'SP.LIQUIDITA' && x.mastro !== 2415), x => x.saldo);
+  const anticipi = -sum(b.filter(x => x.categoria === 'anticipi'), x => x.saldo);
+  const fin = -sum(sp.filter(x => x.voce === 'SP.DEB_FINANZIAMENTI'), x => x.saldo);
+  const soci = -sum(sp.filter(x => x.voce === 'SP.DEB_SOCI'), x => x.saldo);
+  const liquidita = ccAttivi + sbf + acc + cassa + carte;
+  const pfn = fin + anticipi + scoperti - liquidita;
+  return { ccAttivi, scoperti, sbf, acc, cassa, carte, anticipi, fin, soci, liquidita, pfn, pfnTot: pfn + soci };
+}
+const rateAperte = () => S.data.rate.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.stato_piano === 'attivo');
+function statoAder(p) {
+  const rs = S.data.rate.filter(r => r.piano_id === p.id);
+  const saltate = rs.filter(r => r.stato === 'saltata').length, daConf = rs.filter(r => r.stato_effettivo === 'da_confermare').length;
+  const residue = rs.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata');
+  const prossima = residue.find(r => r.scadenza >= OGGI);
+  const soglia = p.soglia_decadenza || S.data.P.soglia_decadenza_ader || 8;
+  const margine = soglia - saltate;
+  return { saltate, daConf, residue: residue.length, residuo: sum(residue, r => r.importo), pagate: rs.filter(r => r.stato === 'pagata').length, prossima, soglia, margine, tot: rs.length };
+}
+function ceAnno(anno) {
+  const rows = S.data.ce.filter(r => r.anno === anno);
+  const voci = {}; const mesi = new Set();
+  rows.forEach(r => { mesi.add(r.mese); const v = voci[r.voce] || (voci[r.voce] = { voce: r.voce, descrizione: r.descrizione, gruppo: r.gruppo, ordine: r.ordine, segno: r.segno, t: [0, 0, 0, 0] }); v.t[Math.floor((r.mese - 1) / 3)] += Number(r.saldo) * r.segno; });
+  const mesiTrim = [0, 0, 0, 0]; mesi.forEach(m => mesiTrim[Math.floor((m - 1) / 3)]++);
+  const lista = Object.values(voci).sort((a, b) => a.ordine - b.ordine);
+  const g = gr => [0, 1, 2, 3].map(i => sum(lista.filter(v => v.gruppo === gr), v => v.t[i]));
+  const ric = g('RICAVI'), varc = g('COSTI_VARIABILI'), fis = g('COSTI_FISSI'), fuori = g('FUORI_EBITDA');
+  const mdc = ric.map((x, i) => x - varc[i]), ebitda = mdc.map((x, i) => x - fis[i]);
+  const ammReg = sum(lista.filter(v => v.voce === 'CE.AMMORTAMENTI'), v => sum(v.t));
+  const ammStima = (!ammReg && S.data.P.ammortamenti_annui) ? mesiTrim.map(m => S.data.P.ammortamenti_annui / 12 * m) : null;
+  const ris = ebitda.map((x, i) => x - fuori[i] - (ammStima ? ammStima[i] : 0));
+  return { anno, lista, mesiTrim, ric, varc, fis, fuori, mdc, ebitda, ris, ammStima, mesi: [...mesi].sort((a, b) => a - b) };
+}
+
+// ---------- Componenti ----------
+const pillStato = s => ({ pagata: '<span class="pill good">pagata</span>', saltata: '<span class="pill bad">saltata</span>', da_confermare: '<span class="pill warn">da confermare</span>', futura: '<span class="pill plain">futura</span>' }[s] || esc(s));
+const tipoPiano = { finanziamento: 'Finanziamenti', simest: 'SIMEST', fornitore: 'Piani di rientro fornitori', ader: 'Rateizzazioni AdER', altro: 'Altro' };
+const tipoBanca = { cc: 'conto corrente', sbf: 'incassi / SBF', accantonamento: 'accantonamento', anticipi: 'anticipi', cassa: 'cassa' };
+function nomeBanca(d) { d = (d || '').toLowerCase(); if (d.includes('verona')) return 'BPER Verona'; if (d.includes('emilia') || d.startsWith('bper')) return 'BPER'; if (d.includes('padana')) return 'Cassa Padana'; if (d.includes('credem')) return 'Credem'; if (d.includes('sondrio')) return 'Pop. Sondrio'; if (d.includes('valsabbina')) return 'Valsabbina'; if (d.includes('cassa')) return 'Cassa contanti'; return 'Altro'; }
+
+function shell(inner) {
+  return `<div class="shell"><aside class="side">
+    <div class="brand"><svg class="flame" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2c2 6 9 9 9 17a9 9 0 0 1-18 0c0-4 2-6 3-8 0 3 1 5 3 5 0-5 1-10 3-14z" fill="#d9480f"/><path d="M16 14c1 3 4 4 4 8a4 4 0 0 1-8 0c0-3 2-4 4-8z" fill="#f59f00"/></svg><div><b>Fiammetta</b><small>Magikal · amministrazione</small></div></div>
+    <nav class="nav">${VISTE.map(([k, l]) => `<button class="${S.view === k ? 'on' : ''}" onclick="UI.go('${k}')">${l}</button>`).join('')}</nav>
+    <div class="foot">${esc(S.me ? S.me.nome : S.email)}<br>Gestionale: ${S.data.stato.ultimo_invio ? fmtDT(S.data.stato.ultimo_invio) : 'mai'}<br>Registrazioni fino al ${fmtD(S.data.stato.ultima_registrazione)}<br><button onclick="UI.reload()">Aggiorna</button> <button onclick="UI.modal('password')">Password</button> <button onclick="UI.logout()">Esci</button></div>
+  </aside><main class="main">${inner}</main></div>${S.modal ? renderModal() : ''}`;
+}
+function render() {
+  if (!S.data) return;
+  const page = { oggi: pageOggi, scadenziario: pageScadenziario, ce: pageCE, banche: pageBanche, impostazioni: pageImpostazioni }[S.view] || pageOggi;
+  const sc = window.scrollY; $('#app').innerHTML = shell(page()); window.scrollTo(0, S._keepScroll ? sc : 0); S._keepScroll = false;
+  const first = document.querySelector('.modal input:not([type=hidden]):not([type=checkbox]),.modal select');
+  if (first && S.modal && !S.modal._f) { first.focus(); S.modal._f = true; }
+}
+
+// ---------- Oggi ----------
+function pageOggi() {
+  const D = S.data, P = D.P, pos = posizione();
+  const scadC = D.scad.filter(s => s.tipo_cf === 'C' && s.datsca < OGGI), scadF = D.scad.filter(s => s.tipo_cf === 'F' && s.datsca < OGGI);
+  const scadutoC = sum(scadC, s => s.importo), scadutoF = -sum(scadF, s => s.importo);
+  const fine = addDays(OGGI, 30);
+  const rate30 = rateAperte().filter(r => r.scadenza >= OGGI && r.scadenza <= fine);
+  const forn30 = D.scad.filter(s => s.tipo_cf === 'F' && s.datsca >= OGGI && s.datsca <= fine);
+  const cli30 = D.scad.filter(s => s.tipo_cf === 'C' && s.datsca >= OGGI && s.datsca <= fine);
+  const usciteRate = sum(rate30, r => r.importo), usciteForn = -sum(forn30, s => s.importo), incassi = sum(cli30, s => s.importo);
+  const daConf = D.rate.filter(r => r.stato_effettivo === 'da_confermare' && r.stato_piano === 'attivo');
+  const ader = D.piani.filter(p => p.tipo === 'ader' && p.stato === 'attivo').map(p => ({ p, s: statoAder(p) }));
+  const eventi = [...rate30.map(r => ({ d: r.scadenza, t: r.nome + (r.n_rate ? ` · rata ${r.n}/${r.n_rate}` : ''), v: -r.importo, k: r.tipo })),
+    ...forn30.map(s => ({ d: s.datsca, t: (s.controparte || s.conto) + (s.numdoc ? ` · ft ${s.numdoc}` : ''), v: s.importo, k: 'fornitore' })),
+    ...cli30.map(s => ({ d: s.datsca, t: (s.controparte || s.conto) + (s.numdoc ? ` · ft ${s.numdoc}` : ''), v: s.importo, k: 'cliente' }))].sort((a, b) => a.d.localeCompare(b.d));
+  const ultimaBanca = D.saldi[0];
+  const liqClass = pos.liquidita < (P.uscite_fisse_mese || 0) ? 'warn' : 'good';
+  return `<div class="head"><h2>Oggi · ${new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2><span class="small muted">Saldi contabili dal gestionale, registrazioni fino al ${fmtD(D.stato.ultima_registrazione)}</span></div>
+  ${daConf.length ? `<div class="alert"><b>${daConf.length} rate scadute senza esito</b> (${eur(sum(daConf, r => r.importo))}): vanno segnate come pagate o saltate nello <a href="#" onclick="UI.go('scadenziario','conferma');return false">Scadenziario</a>.</div>` : ''}
+  ${D.stato.conti_da_mappare ? `<div class="alert"><b>${D.stato.conti_da_mappare} conti con movimenti non ancora classificati</b>: il conto economico non li include. Si classificano in <a href="#" onclick="UI.go('impostazioni');return false">Impostazioni → Mappa dei conti</a>.</div>` : ''}
+  <div class="grid">
+    <div class="card"><h3>Liquidità contabile</h3><div class="kpi ${liqClass}">${eur(pos.liquidita)}</div><div class="sub">c/c attivi ${eur(pos.ccAttivi)} · SBF ${eur(pos.sbf)} · accantonamenti ${eur(pos.acc)} · cassa e carte ${eur(pos.cassa + pos.carte)}</div>${P.uscite_fisse_mese ? `<div class="sub">Uscite fisse di un mese: ${eur(P.uscite_fisse_mese)} ${pos.liquidita < P.uscite_fisse_mese ? '<span class="pill warn">sotto soglia</span>' : '<span class="pill good">coperte</span>'}</div>` : ''}</div>
+    <div class="card"><h3>Scoperti e anticipi</h3><div class="kpi">${eur(pos.scoperti + pos.anticipi)}</div><div class="sub">scoperti di c/c ${eur(pos.scoperti)} · anticipi (castelletto) ${eur(pos.anticipi)}</div>${ultimaBanca && ultimaBanca.accordato_anticipi ? `<div class="sub">Ultimo saldo dal portale ${esc(ultimaBanca.banca)} ${fmtD(ultimaBanca.data)}: anticipi ${eur(ultimaBanca.anticipi_utilizzati)} su accordato ${eur(ultimaBanca.accordato_anticipi)}</div>` : '<div class="sub">Gli accordati si inseriscono in Banche e PFN → Saldi dal portale</div>'}</div>
+    <div class="card"><h3>PFN bancaria</h3><div class="kpi">${eur(pos.pfn)}</div><div class="sub">finanziamenti ${eur(pos.fin)} + anticipi ${eur(pos.anticipi)} + scoperti ${eur(pos.scoperti)} − liquidità ${eur(pos.liquidita)}</div><div class="sub">con finanziamento soci (${eur(pos.soci)}): <b>${eur(pos.pfnTot)}</b></div></div>
+    <div class="card"><h3>Scaduto</h3><div class="kpi sm">clienti <span class="${scadutoC > 0 ? 'warn' : ''}">${eur(scadutoC)}</span></div><div class="sub">${scadC.length} partite scadute da incassare</div><div class="kpi sm" style="margin-top:8px">fornitori <span class="${scadutoF > 0 ? 'bad' : ''}">${eur(scadutoF)}</span></div><div class="sub">${scadF.length} partite scadute da pagare (al netto di acconti e note di credito)</div></div>
+    <div class="card wide"><h3>Prossimi 30 giorni (fino al ${fmtD(fine)})</h3>
+      <div class="grid" style="margin-bottom:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))"><div><div class="kpi sm bad">− ${eur(usciteRate + usciteForn)}</div><div class="sub">uscite: rate e piani ${eur(usciteRate)} · fornitori in scadenza ${eur(usciteForn)}</div></div><div><div class="kpi sm good">+ ${eur(incassi)}</div><div class="sub">incassi attesi da clienti (${cli30.length} scadenze)</div></div><div><div class="kpi sm">${eur(pos.liquidita + incassi - usciteRate - usciteForn)}</div><div class="sub">liquidità a fine periodo se tutto va come previsto (senza stipendi, F24 e spese correnti)</div></div></div>
+      ${eventi.length ? `<div class="scroll"><table><tr><th>Data</th><th>Che cosa</th><th>Tipo</th><th class="num">Importo</th></tr>${eventi.slice(0, 40).map(e => `<tr><td class="nowrap">${fmtD(e.d)}</td><td>${esc(e.t)}</td><td><span class="pill plain">${esc(e.k)}</span></td><td class="num ${e.v < 0 ? 'bad' : 'good'}">${eur(e.v)}</td></tr>`).join('')}</table>${eventi.length > 40 ? `<div class="small muted">… e altre ${eventi.length - 40} scadenze</div>` : ''}</div>` : '<div class="muted">Nessuna scadenza nei prossimi 30 giorni.</div>'}</div>
+    <div class="card"><h3>Rateizzazioni AdER</h3>${ader.length ? `<ul class="list">${ader.map(({ p, s }) => `<li><div><b>${esc(p.nome)}</b><div class="d">${s.saltate} saltate su ${s.soglia} di soglia · residuo ${eur(s.residuo)} · prossima ${s.prossima ? fmtD(s.prossima.scadenza) + ' ' + eur2(s.prossima.importo) : '–'}${s.daConf ? ` · <span class="warn">${s.daConf} da confermare</span>` : ''}</div><div class="bar"><i class="${s.margine <= 1 ? 'bad' : s.margine <= 3 ? 'warn' : 'good'}" style="width:${Math.min(100, 100 * s.saltate / s.soglia)}%"></i></div></div><div class="right">${s.margine <= 1 ? '<span class="pill bad">decadenza vicina</span>' : s.margine <= 3 ? '<span class="pill warn">attenzione</span>' : '<span class="pill good">regolare</span>'}</div></li>`).join('')}</ul>` : '<div class="muted">Nessun piano AdER attivo.</div>'}<div class="small muted" style="margin-top:8px">Il contatore conta solo le rate marcate «saltata»; le rate scadute senza esito non contano finché non vengono confermate.</div></div>
+    <div class="card"><h3>Stato dei dati</h3><ul class="list"><li><span>Ultimo invio del gestionale</span><b>${fmtDT(D.stato.ultimo_invio)}</b></li><li><span>Ultima registrazione in prima nota</span><b>${fmtD(D.stato.ultima_registrazione)}</b></li><li><span>Righe di prima nota caricate</span><b>${n0.format(D.stato.righe_prinot || 0)}</b></li><li><span>Conti con movimenti da classificare</span><b class="${D.stato.conti_da_mappare ? 'warn' : ''}">${D.stato.conti_da_mappare || 0}</b></li><li><span>Rate aperte nello scadenziario</span><b>${rateAperte().length}</b></li></ul></div>
+  </div>`;
+}
+
+// ---------- Scadenziario ----------
+function pageScadenziario() {
+  const D = S.data, f = S.filtroRate;
+  const tabs = [['piani', 'Per piano'], ['prossime', 'Prossimi 60 giorni'], ['conferma', 'Da confermare'], ['tutte', 'Tutte le rate']];
+  let body = '';
+  if (f === 'piani') {
+    const ordine = ['ader', 'finanziamento', 'simest', 'fornitore', 'altro'];
+    body = ordine.map(t => { const ps = D.piani.filter(p => p.tipo === t); if (!ps.length) return ''; return `<h3 style="margin:18px 0 8px">${tipoPiano[t]}</h3>` + ps.map(p => cardPiano(p)).join(''); }).join('');
+  } else {
+    let rs = D.rate.filter(r => r.stato_piano === 'attivo');
+    if (f === 'prossime') rs = rs.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.scadenza <= addDays(OGGI, 60));
+    if (f === 'conferma') rs = rs.filter(r => r.stato_effettivo === 'da_confermare');
+    if (f === 'tutte') rs = D.rate;
+    body = `<div class="card">${tabellaRate(rs, true)}<div class="small muted" style="margin-top:8px">${rs.length} rate · totale ${eur(sum(rs, r => r.importo))}</div></div>`;
+  }
+  return `<div class="head"><h2>Scadenziario</h2><button class="btn primary" onclick="UI.modal('piano')">Nuovo piano</button></div>
+  <div class="tabs">${tabs.map(([k, l]) => `<button class="${f === k ? 'on' : ''}" onclick="UI.filtro('${k}')">${l}</button>`).join('')}</div>${body}`;
+}
+function cardPiano(p) {
+  const s = statoAder(p), rs = S.data.rate.filter(r => r.piano_id === p.id);
+  const pagato = sum(rs.filter(r => r.stato === 'pagata'), r => r.importo), totale = sum(rs, r => r.importo);
+  const mostra = S.modal && S.modal.type === 'x' ? rs : rs; // tutte
+  const stPill = (p.stato || 'attivo') === 'attivo' ? '' : `<span class="pill plain">${esc(String(p.stato).replace('_', ' '))}</span>`;
+  return `<details class="piano" ${S._open === p.id ? 'open' : ''} ontoggle="UI.toggle('${p.id}',this.open)"><summary><span class="nm">${esc(p.nome)} ${stPill}<div class="small muted">${esc(p.controparte || '')}${p.descrizione ? ' · ' + esc(p.descrizione) : ''}</div></span>
+    <span class="small nowrap">${s.pagate}/${s.tot} rate pagate${p.tipo === 'ader' ? ` · <b class="${s.margine <= 1 ? 'bad' : s.margine <= 3 ? 'warn' : ''}">${s.saltate} saltate</b> (soglia ${s.soglia})` : ''}${s.daConf ? ` · <span class="warn">${s.daConf} da confermare</span>` : ''}</span>
+    <span class="small nowrap right">residuo <b>${eur(s.residuo)}</b> su ${eur(totale)}<div class="bar" style="width:140px"><i class="good" style="width:${totale ? 100 * pagato / totale : 0}%"></i></div></span></summary>
+    <div class="body">${p.tipo === 'ader' ? `<div class="small muted" style="margin-bottom:6px">Prossima rata: ${s.prossima ? fmtD(s.prossima.scadenza) + ' · ' + eur2(s.prossima.importo) : '–'} · la decadenza scatta alla ${s.soglia}ª rata non pagata (${s.margine} di margine)</div>` : ''}
+    ${tabellaRate(mostra, false)}
+    <div class="row" style="margin-top:10px"><span class="small muted">Capitale ${eur(p.capitale_iniziale)} · ${p.n_rate || rs.length} rate ${p.cadenza_mesi === 1 ? 'mensili' : p.cadenza_mesi === 6 ? 'semestrali' : 'ogni ' + p.cadenza_mesi + ' mesi'} da ${eur2(p.rata)}${p.rata1 ? ' (prima ' + eur2(p.rata1) + ')' : ''} · dal ${fmtD(p.prima_rata)}</span>
+    <span style="margin-left:auto"><select class="btn sm" onchange="UI.statoPiano('${p.id}',this.value)">${['attivo', 'in_istruttoria', 'in_istanza', 'chiuso', 'decaduto'].map(x => `<option value="${x}" ${p.stato === x ? 'selected' : ''}>${x.replace('_', ' ')}</option>`).join('')}</select> <button class="btn sm" onclick="UI.modal('rata','${p.id}')">Aggiungi rata</button></span></div></div></details>`;
+}
+function tabellaRate(rs, conPiano) {
+  if (!rs.length) return '<div class="muted">Nessuna rata.</div>';
+  return `<div class="scroll"><table><tr>${conPiano ? '<th>Piano</th>' : ''}<th>N.</th><th>Scadenza</th><th class="num">Importo</th><th>Stato</th><th>Pagata il</th><th>Segnata da</th><th></th></tr>
+  ${rs.map(r => `<tr>${conPiano ? `<td>${esc(r.nome)}<div class="small muted">${esc(r.controparte || '')}</div></td>` : ''}<td>${r.n}${r.n_rate ? '/' + r.n_rate : ''}</td><td class="nowrap ${r.stato_effettivo === 'da_confermare' ? 'warn' : ''}">${fmtD(r.scadenza)}</td><td class="num">${eur2(r.importo)}</td><td>${pillStato(r.stato_effettivo)}</td><td class="nowrap">${r.data_pagamento ? fmtD(r.data_pagamento) : ''}${r.banca ? ' <span class="small muted">' + esc(r.banca) + '</span>' : ''}</td><td class="small muted nowrap">${r.marcata_da ? esc(r.marcata_da) + ' · ' + fmtD(r.marcata_il) : ''}${r.nota ? '<div>' + esc(r.nota) + '</div>' : ''}</td>
+  <td class="nowrap right">${r.stato === 'pagata' ? `<button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')" title="Torna a non pagata">annulla</button>` : r.stato === 'saltata' ? `<button class="btn sm" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')">annulla</button>` : `<button class="btn sm primary" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm" onclick="UI.setRata('${r.id}','saltata')">saltata</button>`}</td></tr>`).join('')}</table></div>`;
+}
+
+// ---------- Conto economico ----------
+function pageCE() {
+  const anni = [...new Set(S.data.ce.map(r => r.anno))].sort((a, b) => b - a);
+  if (!anni.length) return '<div class="head"><h2>Conto economico</h2></div><div class="card">Nessuna registrazione contabile caricata.</div>';
+  if (!S.annoCE || !anni.includes(S.annoCE)) S.annoCE = anni[0];
+  const X = ceAnno(S.annoCE), T = ['T1', 'T2', 'T3', 'T4'];
+  const riga = (label, arr, cls, extra) => `<tr class="${cls || ''}"><td>${label}</td>${arr.map(v => `<td class="num">${eur(v)}</td>`).join('')}<td class="num">${eur(sum(arr))}</td><td class="num small">${extra || ''}</td></tr>`;
+  const vociDi = gr => X.lista.filter(v => v.gruppo === gr).map(v => riga(esc(v.descrizione), v.t, 'sub')).join('');
+  const sez = l => `<tr class="sec"><td colspan="7">${l}</td></tr>`;
+  const ricTot = sum(X.ric);
+  const tab = `<div class="scroll"><table>
+    <tr><th>Voce</th>${T.map((t, i) => `<th class="num">${t}<div class="small" style="font-weight:400">${X.mesiTrim[i] ? X.mesiTrim[i] + (X.mesiTrim[i] === 1 ? ' mese' : ' mesi') : '–'}</div></th>`).join('')}<th class="num">Anno</th><th class="num">% ricavi</th></tr>
+    ${sez('Ricavi')}${vociDi('RICAVI')}${riga('<b>Ricavi</b>', X.ric, 'tot', '100%')}
+    ${sez('Costi variabili')}${vociDi('COSTI_VARIABILI')}${riga('Costi variabili', X.varc, 'tot', pct(sum(X.varc), ricTot))}
+    ${riga('<b>Margine di contribuzione</b>', X.mdc, 'tot', pct(sum(X.mdc), ricTot))}
+    ${sez('Costi fissi')}${vociDi('COSTI_FISSI')}${riga('Costi fissi', X.fis, 'tot', pct(sum(X.fis), ricTot))}
+    ${riga('<b>EBITDA</b>', X.ebitda, 'tot', pct(sum(X.ebitda), ricTot))}
+    ${sez('Sotto l\'EBITDA')}${vociDi('FUORI_EBITDA')}${X.ammStima ? riga('Ammortamenti · stima (quota annua ' + eur(S.data.P.ammortamenti_annui) + ' ÷ 12 × mesi registrati)', X.ammStima, 'stima') : ''}
+    ${riga('<b>Risultato' + (X.ammStima ? ' (con ammortamenti stimati)' : '') + '</b>', X.ris, 'tot', pct(sum(X.ris), ricTot))}
+  </table></div>`;
+  const conf = anni.length > 1 ? `<div class="card" style="margin-top:14px"><h3>Confronto per anno</h3><div class="scroll"><table><tr><th>Anno</th><th class="num">Mesi</th><th class="num">Ricavi</th><th class="num">Costi variabili</th><th class="num">Margine</th><th class="num">Costi fissi</th><th class="num">EBITDA</th><th class="num">EBITDA %</th><th class="num">Risultato</th></tr>${anni.slice(0, 3).map(a => { const Y = ceAnno(a); return `<tr><td><b>${a}</b></td><td class="num">${Y.mesi.length}</td><td class="num">${eur(sum(Y.ric))}</td><td class="num">${eur(sum(Y.varc))}</td><td class="num">${eur(sum(Y.mdc))}</td><td class="num">${eur(sum(Y.fis))}</td><td class="num">${eur(sum(Y.ebitda))}</td><td class="num">${pct(sum(Y.ebitda), sum(Y.ric))}</td><td class="num">${eur(sum(Y.ris))}</td></tr>`; }).join('')}</table></div></div>` : `<div class="small muted" style="margin-top:10px">Il confronto con gli anni precedenti compare quando saranno caricati: la contabilità 2024 e 2025 è nel vecchio gestionale (Team System) e non in NTS.</div>`;
+  const ultimoMese = X.mesi[X.mesi.length - 1];
+  return `<div class="head"><h2>Conto economico trimestrale</h2><span><select class="btn" onchange="UI.anno(this.value)">${anni.map(a => `<option value="${a}" ${a === S.annoCE ? 'selected' : ''}>${a}</option>`).join('')}</select></span></div>
+  <div class="alert">Valori <b>come registrati in prima nota</b> (ricavi e costi di competenza, IVA esclusa), registrazioni fino al ${fmtD(S.data.stato.ultima_registrazione)}. Non includono ancora: stipendi e contributi del mese in corso (≈ ${eur(S.data.P.costo_personale_mese)} al mese), accantonamento TFR, variazione delle rimanenze (inventario di fine luglio e fine dicembre), ratei di fine anno. I consumi reali si leggono solo dopo l'inventario: storicamente valgono circa ${S.data.P.consumi_pct_storica || 43}% dei ricavi.</div>
+  <div class="card">${tab}</div>${conf}`;
+}
+
+// ---------- Banche e PFN ----------
+function pageBanche() {
+  const D = S.data, pos = posizione();
+  const conti = [...D.banche].sort((a, b) => nomeBanca(a.descrizione).localeCompare(nomeBanca(b.descrizione)) || a.categoria.localeCompare(b.categoria));
+  const fin = D.sp.filter(x => x.voce === 'SP.DEB_FINANZIAMENTI' && Math.abs(x.saldo) > 0.5);
+  const soci = D.sp.filter(x => x.voce === 'SP.DEB_SOCI' && Math.abs(x.saldo) > 0.5);
+  const pianiFin = D.piani.filter(p => (p.tipo === 'finanziamento' || p.tipo === 'simest') && p.stato === 'attivo').map(p => ({ p, s: statoAder(p) }));
+  const banche = [...new Set(conti.map(c => nomeBanca(c.descrizione)))].filter(b => b !== 'Cassa contanti' && b !== 'Altro');
+  return `<div class="head"><h2>Banche e posizione finanziaria</h2><span class="small muted">saldi contabili al ${fmtD(D.stato.ultima_registrazione)}</span></div>
+  <div class="grid">
+    <div class="card"><h3>PFN bancaria</h3><div class="kpi">${eur(pos.pfn)}</div><table><tr><td>Finanziamenti e mutui</td><td class="num">${eur(pos.fin)}</td></tr><tr><td>Anticipi su fatture (castelletto)</td><td class="num">${eur(pos.anticipi)}</td></tr><tr><td>Scoperti di conto corrente</td><td class="num">${eur(pos.scoperti)}</td></tr><tr><td>− Liquidità (c/c attivi, SBF, accantonamenti, cassa, carte)</td><td class="num">− ${eur(pos.liquidita)}</td></tr><tr class="tot"><td>PFN bancaria</td><td class="num">${eur(pos.pfn)}</td></tr><tr><td>Finanziamento soci</td><td class="num">${eur(pos.soci)}</td></tr><tr class="tot"><td>PFN totale</td><td class="num">${eur(pos.pfnTot)}</td></tr></table></div>
+    <div class="card"><h3>Finanziamenti: contabilità e piani</h3><table><tr><th>Conto / piano</th><th class="num">Debito contabile</th><th class="num">Residuo da piano</th></tr>${fin.map(x => `<tr><td>${esc(x.descrizione)}</td><td class="num">${eur(-x.saldo)}</td><td class="num muted"></td></tr>`).join('')}${pianiFin.map(({ p, s }) => `<tr class="sub"><td>↳ ${esc(p.nome)}</td><td class="num"></td><td class="num">${eur(s.residuo)}</td></tr>`).join('')}<tr class="tot"><td>Totale</td><td class="num">${eur(pos.fin)}</td><td class="num">${eur(sum(pianiFin, x => x.s.residuo))}</td></tr>${soci.map(x => `<tr><td>${esc(x.descrizione)}</td><td class="num">${eur(-x.saldo)}</td><td></td></tr>`).join('')}</table><div class="small muted" style="margin-top:6px">Il residuo da piano somma le rate non ancora pagate (capitale + interessi); il debito contabile è il solo capitale. Le differenze grandi vanno chieste a Michela.</div></div>
+    <div class="card wide"><h3>Conti bancari e cassa (saldi contabili)</h3><div class="scroll"><table><tr><th>Banca</th><th>Conto</th><th>Tipo</th><th class="num">Saldo</th></tr>${conti.map(c => `<tr><td>${esc(nomeBanca(c.descrizione))}</td><td>${esc(c.descrizione)}</td><td><span class="pill plain">${tipoBanca[c.categoria] || c.categoria}</span></td><td class="num ${c.saldo < -0.5 ? 'bad' : c.saldo > 0.5 ? 'good' : 'muted'}">${eur2(c.saldo)}</td></tr>`).join('')}</table></div><div class="small muted" style="margin-top:6px">Segno contabile: positivo = disponibilità, negativo = debito verso la banca. I movimenti bancari importati in NTS non coprono tutte le banche: i saldi reali si confrontano con il portale.</div></div>
+    <div class="card wide"><h3>Saldi dal portale banca (inserimento manuale)</h3>
+      <form class="row" onsubmit="event.preventDefault();UI.salvaSaldo(this)">
+        <div class="field"><label>Data</label><input name="data" type="date" value="${OGGI}" required></div>
+        <div class="field"><label>Banca</label><select name="banca">${banche.map(b => `<option>${esc(b)}</option>`).join('')}<option>Altra</option></select></div>
+        <div class="field"><label>Saldo c/c</label><input name="saldo_cc" inputmode="decimal" placeholder="es. -12.500,00"></div>
+        <div class="field"><label>Anticipi utilizzati</label><input name="anticipi_utilizzati" inputmode="decimal"></div>
+        <div class="field"><label>Accordato anticipi</label><input name="accordato_anticipi" inputmode="decimal"></div>
+        <div class="field"><label>Fido c/c</label><input name="fido_cc" inputmode="decimal"></div>
+        <div class="field" style="flex:2 1 200px"><label>Note</label><input name="note"></div>
+        <div class="field" style="flex:0 0 auto"><button class="btn primary">Salva</button></div></form>
+      ${D.saldi.length ? `<div class="scroll"><table><tr><th>Data</th><th>Banca</th><th class="num">Saldo c/c</th><th class="num">Anticipi</th><th class="num">Accordato</th><th class="num">Fido c/c</th><th>Note</th><th>Inserito da</th><th></th></tr>${D.saldi.map(s => `<tr><td class="nowrap">${fmtD(s.data)}</td><td>${esc(s.banca)}</td><td class="num">${eur2(s.saldo_cc)}</td><td class="num">${eur2(s.anticipi_utilizzati)}</td><td class="num">${eur2(s.accordato_anticipi)}</td><td class="num">${eur2(s.fido_cc)}</td><td class="small">${esc(s.note || '')}</td><td class="small muted">${esc(s.inserito_da || '')}</td><td><button class="btn sm ghost" onclick="UI.eliminaSaldo(${s.id})">elimina</button></td></tr>`).join('')}</table></div>` : '<div class="muted small">Nessun saldo inserito. I saldi del portale servono per confrontare la contabilità con la banca e per conoscere l\'accordato degli anticipi.</div>'}</div>
+  </div>`;
+}
+
+// ---------- Impostazioni ----------
+function pageImpostazioni() {
+  const D = S.data;
+  const par = D.par.map(p => `<tr><td><b>${esc(p.chiave)}</b><div class="small muted">${esc(p.descrizione || '')}</div></td><td class="num"><input class="search" style="max-width:140px;text-align:right" value="${esc(String(p.valore))}" onchange="UI.parametro('${esc(p.chiave)}',this.value)"></td></tr>`).join('');
+  let mappa = '<div class="muted small">Carico la mappa…</div>';
+  if (S.mappa) {
+    const q = S.cercaConto.toLowerCase();
+    let rows = S.mappa.conti.filter(c => (!S.soloMov || S.mappa.mov.has(c.conto)) && (!q || String(c.conto).includes(q) || (c.descrizione || '').toLowerCase().includes(q) || (S.mappa.m[c.conto] || '').toLowerCase().includes(q)));
+    const nonMappati = rows.filter(c => !S.mappa.m[c.conto]); rows = [...nonMappati, ...rows.filter(c => S.mappa.m[c.conto])].slice(0, 400);
+    const opts = v => `<option value="">— non classificato —</option>` + S.mappa.voci.map(x => `<option value="${x.codice}" ${v === x.codice ? 'selected' : ''}>${x.codice} · ${esc(x.descrizione)}</option>`).join('');
+    mappa = `<div class="row" style="margin-bottom:8px"><input class="search" placeholder="cerca conto o descrizione" value="${esc(S.cercaConto)}" oninput="UI.cerca(this.value)"><label class="small"><input type="checkbox" ${S.soloMov ? 'checked' : ''} onchange="UI.soloMov(this.checked)"> solo conti con movimenti</label><span class="small muted">${nonMappati.length ? `<b class="warn">${nonMappati.length} da classificare</b> · ` : ''}${rows.length} conti mostrati</span></div>
+    <div class="scroll" style="max-height:60vh"><table><tr><th>Conto</th><th>Descrizione</th><th class="num">Saldo</th><th>Voce di riclassificazione</th><th>Aggiornato</th></tr>${rows.map(c => `<tr><td class="nowrap">${c.conto}</td><td>${esc(c.descrizione)}<div class="small muted">mastro ${c.mastro || ''}</div></td><td class="num">${S.mappa.saldo[c.conto] != null ? eur(S.mappa.saldo[c.conto]) : ''}</td><td><select class="search" onchange="UI.mappaConto(${c.conto},this.value)">${opts(S.mappa.m[c.conto])}</select></td><td class="small muted">${esc(S.mappa.da[c.conto] || '')}</td></tr>`).join('')}</table></div>`;
+  } else if (!S._mappaLoading) { S._mappaLoading = true; loadMappa().then(() => { S._mappaLoading = false; S._keepScroll = true; render(); }).catch(e => { S._mappaLoading = false; toast('Mappa non caricata: ' + e.message, 5000); }); }
+  return `<div class="head"><h2>Impostazioni</h2></div><div class="grid">
+    <div class="card"><h3>Parametri</h3><table>${par}</table><div class="small muted" style="margin-top:6px">Numeri senza separatore delle migliaia (es. 25000). Il cambio è immediato.</div></div>
+    <div class="card"><h3>Team</h3><table>${D.team.map(t => `<tr><td>${esc(t.nome)}<div class="small muted">${esc(t.email)}</div></td><td><span class="pill plain">${esc(t.ruolo)}</span> ${t.attivo ? '' : '<span class="pill bad">disattivo</span>'}</td></tr>`).join('')}</table><div class="small muted" style="margin-top:6px">Gli utenti si aggiungono in Supabase (tabella team + invito via Authentication). Versione app ${esc(C.versione || '')}.</div><button class="btn" style="margin-top:8px" onclick="UI.modal('password')">Cambia la mia password</button></div>
+    <div class="card wide"><h3>Mappa dei conti → voci del conto economico e dello stato patrimoniale</h3><div class="small muted" style="margin-bottom:8px">Bozza preparata il 06/11/2026 sul piano dei conti NTS, da validare (Miriam). Cambiando la voce il conto economico si aggiorna subito; i clienti e i fornitori sono classificati automaticamente.</div>${mappa}</div>
+  </div>`;
+}
+async function loadMappa() {
+  const [voci, mappa, conti, saldi] = await Promise.all([all('voci', q => q.order('sezione').order('ordine')), all('mappa_conti'), all('erp_conti', q => q.eq('tipo', 'S').order('conto')), all('v_saldi_conti')]);
+  const m = {}, da = {}; mappa.forEach(x => { m[x.conto] = x.voce; da[x.conto] = (x.aggiornato_da || '') + ' ' + fmtD(x.aggiornato_il); });
+  const mov = new Set(), saldo = {}; saldi.forEach(s => { mov.add(s.conto); saldo[s.conto] = (saldo[s.conto] || 0) + Number(s.saldo); });
+  S.mappa = { voci, m, da, conti, mov, saldo };
+}
+
+// ---------- Modali ----------
+function renderModal() {
+  const M = S.modal; let h = '';
+  if (M.type === 'pagata') {
+    const r = S.data.rate.find(x => x.id === M.id);
+    h = `<h2>Rata pagata</h2><p class="small muted">${esc(r.nome)} · rata ${r.n}${r.n_rate ? '/' + r.n_rate : ''} · scadenza ${fmtD(r.scadenza)} · ${eur2(r.importo)}</p>
+    <form onsubmit="event.preventDefault();UI.confermaPagata(this,'${r.id}')"><div class="field"><label>Pagata il</label><input name="data" type="date" value="${r.scadenza <= OGGI ? r.scadenza : OGGI}" required></div><div class="field"><label>Banca (facoltativo)</label><input name="banca" value="${esc(r.banca || '')}" placeholder="es. Cassa Padana"></div><div class="field"><label>Nota (facoltativo)</label><input name="nota" value="${esc(r.nota || '')}"></div><div class="row"><button class="btn primary">Conferma</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+  } else if (M.type === 'rata') {
+    const p = S.data.piani.find(x => x.id === M.id), rs = S.data.rate.filter(r => r.piano_id === p.id);
+    const last = rs[rs.length - 1];
+    h = `<h2>Aggiungi rata · ${esc(p.nome)}</h2><form onsubmit="event.preventDefault();UI.aggiungiRata(this,'${p.id}')"><div class="row"><div class="field"><label>Numero</label><input name="n" type="number" value="${(last ? last.n : 0) + 1}" required></div><div class="field"><label>Scadenza</label><input name="scadenza" type="date" value="${last ? addMonths(last.scadenza, p.cadenza_mesi || 1) : OGGI}" required></div><div class="field"><label>Importo</label><input name="importo" inputmode="decimal" value="${p.rata || ''}" required></div></div><div class="row"><button class="btn primary">Aggiungi</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+  } else if (M.type === 'piano') {
+    h = `<h2>Nuovo piano di pagamento</h2><form onsubmit="event.preventDefault();UI.nuovoPiano(this)">
+    <div class="row"><div class="field"><label>Tipo</label><select name="tipo">${Object.entries(tipoPiano).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div><div class="field" style="flex:2"><label>Nome</label><input name="nome" required placeholder="es. Mutuo Credem auto / AR123456789"></div></div>
+    <div class="field"><label>Controparte</label><input name="controparte" placeholder="banca, fornitore, Agenzia delle Entrate-Riscossione"></div>
+    <div class="field"><label>Descrizione</label><input name="descrizione"></div>
+    <div class="row"><div class="field"><label>Capitale / totale</label><input name="capitale_iniziale" inputmode="decimal"></div><div class="field"><label>Numero rate</label><input name="n_rate" type="number" min="1" required></div><div class="field"><label>Ogni (mesi)</label><input name="cadenza_mesi" type="number" min="1" value="1" required></div></div>
+    <div class="row"><div class="field"><label>Prima rata il</label><input name="prima_rata" type="date" required></div><div class="field"><label>Importo rata</label><input name="rata" inputmode="decimal" required></div><div class="field"><label>Prima rata diversa</label><input name="rata1" inputmode="decimal" placeholder="se diversa"></div></div>
+    <div class="row"><div class="field"><label>Soglia di decadenza (AdER)</label><input name="soglia_decadenza" type="number" placeholder="8"></div><div class="field"><label>Note</label><input name="note"></div></div>
+    <div class="small muted" style="margin-bottom:10px">Le rate vengono generate automaticamente; l'id del piano si ricava dal nome. Le rate già pagate si segnano dopo, dalla tabella.</div>
+    <div class="row"><button class="btn primary">Crea il piano</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+  } else if (M.type === 'password') {
+    h = `<h2>Cambia password</h2><form onsubmit="event.preventDefault();UI.password(this)"><div class="field"><label>Nuova password (almeno 10 caratteri)</label><input name="p1" type="password" autocomplete="new-password" minlength="10" required></div><div class="field"><label>Ripeti</label><input name="p2" type="password" autocomplete="new-password" required></div><div class="row"><button class="btn primary">Salva</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+  }
+  return `<div class="modal-bg" onclick="if(event.target===this)UI.closeModal()"><div class="modal">${h}</div></div>`;
+}
+
+// ---------- Azioni ----------
+async function guard(fn, okMsg) {
+  if (S.busy) return; S.busy = true;
+  try { await fn(); if (okMsg) toast(okMsg); } catch (e) { console.error(e); toast('Errore: ' + (e.message || e), 6000); } finally { S.busy = false; }
+}
+const chi = () => (S.me && S.me.nome) || S.email;
+const UI = {
+  go(v, filtro) { S.view = v; if (filtro) S.filtroRate = filtro; try { localStorage.setItem('fiammetta-view', v); } catch (e) {} render(); },
+  filtro(f) { S.filtroRate = f; render(); },
+  anno(a) { S.annoCE = Number(a); render(); },
+  toggle(id, open) { if (open) S._open = id; else if (S._open === id) S._open = null; },
+  cerca(v) { S.cercaConto = v; S._keepScroll = true; render(); const i = document.querySelector('.search[placeholder]'); if (i) { i.focus(); i.setSelectionRange(v.length, v.length); } },
+  soloMov(v) { S.soloMov = v; S._keepScroll = true; render(); },
+  modal(type, id) { S.modal = { type, id }; render(); },
+  closeModal() { S.modal = null; render(); },
+  async reload() { await guard(async () => { await loadAll(); S.mappa = null; render(); }, 'Dati aggiornati'); },
+  async logout() { await S.sb.auth.signOut(); location.reload(); },
+  async setRata(id, stato) {
+    await guard(async () => {
+      const patch = { stato, marcata_da: chi(), marcata_il: new Date().toISOString() }; if (stato === 'futura') { patch.data_pagamento = null; patch.marcata_da = null; patch.marcata_il = null; }
+      const { error } = await S.sb.from('rate').update(patch).eq('id', id); if (error) throw error;
+      await reloadRate(); S._keepScroll = true; render();
+    }, stato === 'saltata' ? 'Rata segnata come saltata' : 'Rata riportata a non pagata');
+  },
+  async confermaPagata(form, id) {
+    await guard(async () => {
+      const patch = { stato: 'pagata', data_pagamento: form.data.value, banca: form.banca.value.trim() || null, nota: form.nota.value.trim() || null, marcata_da: chi(), marcata_il: new Date().toISOString() };
+      const { error } = await S.sb.from('rate').update(patch).eq('id', id); if (error) throw error;
+      S.modal = null; await reloadRate(); S._keepScroll = true; render();
+    }, 'Rata segnata come pagata');
+  },
+  async aggiungiRata(form, pid) {
+    await guard(async () => {
+      const n = Number(form.n.value), importo = num(form.importo.value); if (!importo) throw new Error('importo non valido');
+      const { error } = await S.sb.from('rate').insert({ id: pid + '-' + n, piano_id: pid, n, scadenza: form.scadenza.value, importo, stato: 'futura' }); if (error) throw error;
+      S.modal = null; await reloadRate(); S._keepScroll = true; render();
+    }, 'Rata aggiunta');
+  },
+  async statoPiano(id, stato) {
+    await guard(async () => { const { error } = await S.sb.from('piani').update({ stato, aggiornato_il: new Date().toISOString() }).eq('id', id); if (error) throw error; await reloadRate(); S._keepScroll = true; render(); }, 'Stato del piano aggiornato');
+  },
+  async nuovoPiano(form) {
+    await guard(async () => {
+      const f = new FormData(form); const g = k => (f.get(k) || '').toString().trim();
+      const nome = g('nome'); let id = nome.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+      if (!id) throw new Error('nome non valido'); if (S.data.piani.some(p => p.id === id)) id += '-' + Date.now().toString(36);
+      const n = Number(g('n_rate')), cad = Number(g('cadenza_mesi')) || 1, rata = num(g('rata')), rata1 = num(g('rata1')), prima = g('prima_rata');
+      if (!n || !rata || !prima) throw new Error('compila numero rate, importo e prima rata');
+      const piano = { id, tipo: g('tipo'), nome, controparte: g('controparte') || null, descrizione: g('descrizione') || null, capitale_iniziale: num(g('capitale_iniziale')), n_rate: n, cadenza_mesi: cad, prima_rata: prima, rata, rata1, soglia_decadenza: g('soglia_decadenza') ? Number(g('soglia_decadenza')) : (g('tipo') === 'ader' ? (S.data.P.soglia_decadenza_ader || 8) : null), note: g('note') || null, stato: 'attivo', creato_da: chi() };
+      let r = await S.sb.from('piani').insert(piano); if (r.error) throw r.error;
+      const rate = []; for (let i = 0; i < n; i++) rate.push({ id: id + '-' + (i + 1), piano_id: id, n: i + 1, scadenza: addMonths(prima, i * cad), importo: (i === 0 && rata1) ? rata1 : rata, stato: 'futura' });
+      r = await S.sb.from('rate').insert(rate); if (r.error) throw r.error;
+      S.modal = null; await reloadRate(); S.filtroRate = 'piani'; S._open = id; render();
+    }, 'Piano creato');
+  },
+  async salvaSaldo(form) {
+    await guard(async () => {
+      const f = new FormData(form); const g = k => (f.get(k) || '').toString().trim();
+      const row = { data: g('data'), banca: g('banca'), saldo_cc: num(g('saldo_cc')), anticipi_utilizzati: num(g('anticipi_utilizzati')), accordato_anticipi: num(g('accordato_anticipi')), fido_cc: num(g('fido_cc')), note: g('note') || null, inserito_da: chi() };
+      const { error } = await S.sb.from('saldi_banca').upsert(row, { onConflict: 'data,banca' }); if (error) throw error;
+      const r = await S.sb.from('saldi_banca').select('*').order('data', { ascending: false }).order('banca').limit(80); if (r.error) throw r.error; S.data.saldi = r.data; S._keepScroll = true; render();
+    }, 'Saldo salvato');
+  },
+  async eliminaSaldo(id) {
+    if (!confirm('Eliminare questo saldo?')) return;
+    await guard(async () => { const { error } = await S.sb.from('saldi_banca').delete().eq('id', id); if (error) throw error; S.data.saldi = S.data.saldi.filter(s => s.id !== id); S._keepScroll = true; render(); }, 'Saldo eliminato');
+  },
+  async parametro(chiave, valore) {
+    await guard(async () => { const v = num(valore); if (v == null) throw new Error('valore non numerico'); const { error } = await S.sb.from('parametri').update({ valore: v }).eq('chiave', chiave); if (error) throw error; S.data.P[chiave] = v; S.data.par.find(p => p.chiave === chiave).valore = v; }, 'Parametro salvato');
+  },
+  async mappaConto(conto, voce) {
+    await guard(async () => {
+      if (!voce) { const { error } = await S.sb.from('mappa_conti').delete().eq('conto', conto); if (error) throw error; delete S.mappa.m[conto]; delete S.mappa.da[conto]; }
+      else { const c = S.mappa.conti.find(x => x.conto === conto); const { error } = await S.sb.from('mappa_conti').upsert({ conto, voce, note: c ? c.descrizione : null, aggiornato_da: chi(), aggiornato_il: new Date().toISOString() }); if (error) throw error; S.mappa.m[conto] = voce; S.mappa.da[conto] = chi() + ' ' + fmtD(OGGI); }
+      S.data.ce = await all('v_ce_mese'); S.data.sp = await all('v_sp_saldi'); S.data.stato = (await S.sb.rpc('stato_dati')).data || S.data.stato; S._keepScroll = true; render();
+    }, 'Conto classificato');
+  },
+  async password(form) {
+    const p1 = form.p1.value, p2 = form.p2.value;
+    if (p1.length < 10) return toast('La password deve avere almeno 10 caratteri');
+    if (p1 !== p2) return toast('Le due password non coincidono');
+    await guard(async () => { const { error } = await S.sb.auth.updateUser({ password: p1 }); if (error) throw error; S.modal = null; S.setPwd = false; if (!S.data) start(); else render(); }, 'Password salvata');
+  }
+};
+
+// ---------- Accesso e avvio ----------
+function renderLogin(msg) {
+  $('#app').innerHTML = `<div class="login"><form class="login-card" onsubmit="event.preventDefault();doLogin(this)"><h1>Fiam<em>metta</em></h1><p class="small muted" style="margin:0 0 14px">Amministrazione e finanza · accesso riservato</p><div class="field"><label for="le">Email</label><input id="le" name="email" type="email" autocomplete="username" required></div><div class="field"><label for="lp">Password</label><input id="lp" name="password" type="password" autocomplete="current-password" required></div><div class="err" id="lerr">${esc(msg || '')}</div><button class="btn primary" style="justify-content:center;width:100%;padding:10px">Entra</button><div class="small muted" style="margin-top:12px;text-align:center"><a href="#" onclick="recupera();return false">Password dimenticata?</a></div></form></div>`;
+}
+function renderSetPassword(msg) {
+  $('#app').innerHTML = `<div class="login"><form class="login-card" onsubmit="event.preventDefault();UI.password(this)"><h1>Fiam<em>metta</em></h1><p class="small muted">Benvenuto${S.email ? ', ' + esc(S.email) : ''}. Scegli la password con cui entrerai in Fiammetta.</p><div class="field"><label>Nuova password (almeno 10 caratteri)</label><input name="p1" type="password" autocomplete="new-password" minlength="10" required></div><div class="field"><label>Ripeti la password</label><input name="p2" type="password" autocomplete="new-password" required></div><div class="err">${esc(msg || '')}</div><button class="btn primary" style="justify-content:center;width:100%;padding:10px">Salva ed entra</button></form></div>`;
+}
+async function recupera() {
+  const email = ($('#le').value || '').trim(); if (!email) { $('#lerr').textContent = 'Scrivi la tua email, poi premi «Password dimenticata?».'; return; }
+  const { error } = await S.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  $('#lerr').textContent = error ? 'Non riesco a inviare il messaggio: ' + error.message : 'Se l\'indirizzo è abilitato riceverai un messaggio con il collegamento per scegliere una nuova password.';
+}
+async function doLogin(form) {
+  const btn = form.querySelector('button'); btn.disabled = true; $('#lerr').textContent = '';
+  const { error } = await S.sb.auth.signInWithPassword({ email: form.email.value.trim(), password: form.password.value });
+  btn.disabled = false;
+  if (error) { $('#lerr').textContent = /invalid/i.test(error.message) ? 'Email o password non corretti.' : 'Accesso non riuscito: ' + error.message; return; }
+  start();
+}
+async function start() {
+  $('#app').innerHTML = '<div class="loading">Carico i dati…</div>';
+  const { data: { session } } = await S.sb.auth.getSession();
+  if (!session) return renderLogin();
+  S.email = (session.user.email || '').toLowerCase();
+  if (S.setPwd) return renderSetPassword();
+  try { await loadAll(); } catch (e) { console.error(e); $('#app').innerHTML = `<div class="loading">Non riesco a leggere i dati (${esc(e.message)}).<br><br><button class="btn" onclick="location.reload()">Riprova</button> <button class="btn" onclick="UI.logout()">Esci</button></div>`; return; }
+  S.me = S.data.team.find(t => t.email.toLowerCase() === S.email && t.attivo);
+  if (!S.me) { await S.sb.auth.signOut(); S.data = null; return renderLogin('Questo utente non è abilitato a Fiammetta. Chiedi ad Andrea di aggiungerlo al team.'); }
+  try { const v = localStorage.getItem('fiammetta-view'); if (v && VISTE.some(x => x[0] === v)) S.view = v; } catch (e) {}
+  render();
+}
+setInterval(async () => { if (S.loadedAt && !S.modal && !S.busy && !document.hidden && Date.now() - S.loadedAt > 10 * 60000) { try { await loadAll(); S._keepScroll = true; render(); } catch (e) {} } }, 60000);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.modal) UI.closeModal(); });
+(function init() {
+  const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (/^(invite|recovery|magiclink|signup)$/.test(h.get('type') || '')) S.setPwd = true;
+  const errDesc = h.get('error_description');
+  S.sb = supabase.createClient(C.supabaseUrl, C.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  S.sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') { S.setPwd = true; if (!S.data) start(); } });
+  if (errDesc) { history.replaceState(null, '', location.pathname); renderLogin('Il collegamento non è valido o è scaduto (' + errDesc.replace(/\+/g, ' ') + '). Chiedi un nuovo invito oppure usa «Password dimenticata?».'); return; }
+  // supabase-js legge la sessione dall'URL e poi lo ripulisce: aspettiamo un attimo prima di partire
+  setTimeout(start, S.setPwd || location.hash.includes('access_token') ? 600 : 0);
+})();
+</script>
+</body>
+</html>
