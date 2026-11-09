@@ -26,7 +26,13 @@ function isoLocal(d) { d = d || new Date(); return d.getFullYear() + '-' + Strin
 function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return isoLocal(d); }
 function addMonths(iso, n) { const d = new Date(iso + 'T00:00:00'); const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(day, last)); return isoLocal(d); }
 const giorni = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
-const num = v => { const x = parseFloat(String(v == null ? '' : v).replace(/\./g, '').replace(',', '.')); return isNaN(x) ? null : x; };
+// Importi: un solo separatore (punto o virgola) è il separatore decimale; se ci sono entrambi vale l'ultimo («1.234,56» e «1,234.56»); più punti = migliaia
+const num = v => { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); if (!t) return null;
+  const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+  if (c >= 0 && d >= 0) t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if (c >= 0) t = t.replace(',', '.');
+  else if ((t.match(/\./g) || []).length > 1) t = t.replace(/\./g, '');
+  const x = parseFloat(t); return isNaN(x) ? null : x; };
 const sum = (arr, f) => arr.reduce((a, r) => a + (Number(f ? f(r) : r) || 0), 0);
 const OGGI = isoLocal();
 let toastT; function toast(msg, ms) { let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); } t.textContent = msg; clearTimeout(toastT); toastT = setTimeout(() => t.remove(), ms || 2800); }
@@ -43,7 +49,7 @@ async function all(table, build) {
   return out;
 }
 async function loadAll() {
-  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti, cOrdini, cBolle, cFatture, cIncassi] = await Promise.all([
+  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti, cOrdini, cBolle, cFatture, cIncassi, docF24] = await Promise.all([
     S.sb.rpc('stato_dati').then(r => { if (r.error) throw r.error; return r.data; }),
     all('v_ce_mese'), all('v_sp_saldi'), all('v_banche_saldi'),
     all('v_rate', q => q.order('scadenza').order('n')), all('piani', q => q.order('tipo').order('nome')),
@@ -55,18 +61,20 @@ async function loadAll() {
     all('v_banca_stima'), all('v_banca_nuovi', q => q.order('dataoperaz', { ascending: false })),
     all('erp_banche', q => q.order('codice')), all('fidi_banca'), all('v_cc_utilizzo'), all('v_oneri_banca'),
     all('conti_uniti').catch(() => []),
-    all('v_catena_ordini').catch(() => []), all('v_catena_bolle').catch(() => []), all('v_catena_fatture').catch(() => []), all('v_incassi_banca').catch(() => [])
+    all('v_catena_ordini').catch(() => []), all('v_catena_bolle').catch(() => []), all('v_catena_fatture').catch(() => []), all('v_incassi_banca').catch(() => []),
+    all('documenti_f24', q => q.order('caricato_il', { ascending: false })).catch(() => [])
   ]);
   const P = {}; par.forEach(p => P[p.chiave] = typeof p.valore === 'number' ? p.valore : num(p.valore));
   const R = {}; regole.forEach(r => R[r.conto] = r);
   S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team, movimenti, regole, R, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti,
-    catena: { ordini: cOrdini, bolle: cBolle, fatture: cFatture, incassi: cIncassi } };
+    catena: { ordini: cOrdini, bolle: cBolle, fatture: cFatture, incassi: cIncassi }, docF24 };
   collegaCatena();
   await riconcilia();
   arricchisci();
   S.loadedAt = Date.now();
 }
 async function reloadRate() { S.data.rate = await all('v_rate', q => q.order('scadenza').order('n')); S.data.piani = await all('piani', q => q.order('tipo').order('nome')); arricchisci(); }
+async function reloadDocF24() { S.data.docF24 = await all('documenti_f24', q => q.order('caricato_il', { ascending: false })); }
 async function reloadMovimenti() { S.data.movimenti = await all('movimenti_app', q => q.eq('stato', 'attesa').order('data', { ascending: false })); await riconcilia(); arricchisci(); }
 
 // Collega gli incassi segnati in Fiammetta alle partite e chiude quelli che NTS ha ormai registrato
@@ -384,7 +392,9 @@ function render() {
   const page = { oggi: pageOggi, partite: pagePartite, scadenziario: pageScadenziario, ce: pageCE, banche: pageBanche, stato: pageStato, impostazioni: pageImpostazioni }[S.view] || pageOggi;
   const sc = window.scrollY; $('#app').innerHTML = shell(page()); etichette(); window.scrollTo(0, S._keepScroll ? sc : 0); S._keepScroll = false;
   const first = document.querySelector('.modal input:not([type=hidden]):not([type=checkbox]),.modal select');
-  if (first && S.modal && !S.modal._f) { first.focus(); S.modal._f = true; }
+  const sicuro = document.querySelector('.modal button[autofocus]');
+  if (sicuro && S.modal && !S.modal._f) { sicuro.focus(); S.modal._f = true; }
+  else if (first && S.modal && !S.modal._f) { first.focus(); S.modal._f = true; }
 }
 
 // ---------- Oggi ----------
@@ -489,7 +499,7 @@ function statoProforma(p) {
 function tabellaProforme(rows) {
   if (!rows.length) return '<div class="card muted">Nessuna proforma.</div>';
   const presenti = GRUPPI_PF.filter(([k]) => rows.some(p => p.stato === k)), conIntest = presenti.length > 1;
-  const riga = p => `<tr><td class="nowrap">n. ${p.numdoc}<span class="d2">${fmtD(p.datdoc)}</span></td><td>${esc(p.controparte || p.conto)}${p.paese && p.paese !== 'IT' ? ' <span class="pill plain">' + esc(p.paese) + '</span>' : ''}${p.pagamento ? `<span class="d2">${esc(p.pagamento)}</span>` : ''}</td><td class="small">${catenaProforma(p)}</td><td class="num">${eur2(p.totdoc)}</td><td>${statoProforma(p)}${p.copertura && p.copertura.nota ? '<span class="d2">' + esc(p.copertura.nota) + '</span>' : ''}</td><td class="right">${['attesa', 'da_fatturare', 'verifica'].includes(p.stato) ? `<button class="btn sm primary" onclick="UI.modal('incasso','pf:${p.chiave}')">Incassata</button> <button class="btn sm ghost" onclick="UI.annullaProforma('${p.chiave}')">non valida</button>` : p.copertura ? `<button class="btn sm ghost" onclick="UI.annullaMovimento(${p.copertura.id})">annulla</button>` : ''}</td></tr>`;
+  const riga = p => `<tr><td class="nowrap">n. ${p.numdoc}<span class="d2">${fmtD(p.datdoc)}</span></td><td>${esc(p.controparte || p.conto)}${p.paese && p.paese !== 'IT' ? ' <span class="pill plain">' + esc(p.paese) + '</span>' : ''}${p.pagamento ? `<span class="d2">${esc(p.pagamento)}</span>` : ''}</td><td class="small">${catenaProforma(p)}</td><td class="num">${eur2(p.totdoc)}</td><td>${statoProforma(p)}${p.copertura && p.copertura.nota ? '<span class="d2">' + esc(p.copertura.nota) + '</span>' : ''}</td><td class="right">${['attesa', 'da_fatturare', 'verifica'].includes(p.stato) ? `<button class="btn sm primary" onclick="UI.modal('incasso','pf:${p.chiave}')">Incassata</button> ${puoElim() ? `<button class="btn sm ghost" onclick="UI.chiediAnnullaProforma('${p.chiave}')">non valida</button>` : ''}` : p.copertura && puoElim() ? `<button class="btn sm ghost" onclick="UI.chiediAnnullaMovimento(${p.copertura.id})">annulla</button>` : ''}</td></tr>`;
   const corpo = presenti.map(([k, titolo]) => { const g = rows.filter(p => p.stato === k);
     return (conIntest ? `<tr class="grp"><td colspan="6">${titolo} · ${g.length} · ${eur(sum(g, p => p.totdoc))}</td></tr>` : '') + g.map(riga).join(''); }).join('');
   return `<div class="card"><div class="scroll"><table class="resp"><tr><th>Proforma</th><th>Cliente</th><th>Ordine, bolla e fattura</th><th class="num">Importo</th><th>Stato</th><th></th></tr>${corpo}</table></div></div>`;
@@ -550,7 +560,7 @@ function pagePartite() {
   } else {
     const rows = D.movimenti.filter(m => m.stato === 'attesa');
     body = `<div class="small muted" style="margin-bottom:8px">Incassi e pagamenti segnati a mano in Fiammetta che NTS non ha ancora registrato. Spariscono da soli quando la partita viene chiusa in prima nota.</div>
-    <div class="card"><div class="scroll"><table class="resp"><tr><th>Data</th><th>Tipo</th><th>Controparte</th><th>Riferimento</th><th class="num">Importo</th><th>Banca</th><th></th></tr>${rows.map(m => `<tr><td class="nowrap">${fmtD(m.data)}</td><td>${m.tipo === 'incasso' ? '<span class="pill good">incasso</span>' : '<span class="pill bad">pagamento</span>'}</td><td>${esc(m.controparte || m.conto || '')}</td><td class="small muted">${m.chiave_partita ? 'partita ' + esc(m.chiave_partita.split('|').slice(1, 4).join('/')) : m.chiave_doc ? 'proforma ' + esc(m.chiave_doc.split('|').pop()) : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</td><td class="num">${eur2(m.importo)}</td><td class="small">${esc(m.banca || '')}<span class="d2">segnato da ${esc(m.creato_da || '')} il ${fmtD(m.creato_il)}</span></td><td class="right"><button class="btn sm ghost" onclick="UI.annullaMovimento(${m.id})">annulla</button></td></tr>`).join('')}</table></div>${rows.length ? '' : '<div class="muted">Niente in attesa.</div>'}</div>`;
+    <div class="card"><div class="scroll"><table class="resp"><tr><th>Data</th><th>Tipo</th><th>Controparte</th><th>Riferimento</th><th class="num">Importo</th><th>Banca</th><th></th></tr>${rows.map(m => `<tr><td class="nowrap">${fmtD(m.data)}</td><td>${m.tipo === 'incasso' ? '<span class="pill good">incasso</span>' : '<span class="pill bad">pagamento</span>'}</td><td>${esc(m.controparte || m.conto || '')}</td><td class="small muted">${m.chiave_partita ? 'partita ' + esc(m.chiave_partita.split('|').slice(1, 4).join('/')) : m.chiave_doc ? 'proforma ' + esc(m.chiave_doc.split('|').pop()) : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</td><td class="num">${eur2(m.importo)}</td><td class="small">${esc(m.banca || '')}<span class="d2">segnato da ${esc(m.creato_da || '')} il ${fmtD(m.creato_il)}</span></td><td class="right">${puoElim() ? `<button class="btn sm ghost" onclick="UI.chiediAnnullaMovimento(${m.id})">annulla</button>` : ''}</td></tr>`).join('')}</table></div>${rows.length ? '' : '<div class="muted">Niente in attesa.</div>'}</div>`;
   }
   return `<div class="head"><h2>Crediti e debiti</h2><span class="small muted">partite aperte in NTS al ${fmtD(D.stato.ultima_registrazione)} · movimenti banca fino al ${fmtD(posizione().ultimoMov)}</span></div>
   <div class="tabs" style="margin-bottom:10px">${tabs.map(([k, l]) => `<button class="${T.tab === k ? 'on' : ''}" style="${T.tab === k ? '' : 'border-color:#cfc5b8'}" onclick="UI.partite('${k}')">${l}</button>`).join('')}</div>${body}`;
@@ -584,6 +594,12 @@ function pageScadenziario() {
   return `<div class="head"><h2>Scadenziario</h2><span><button class="btn primary" onclick="UI.modal('f24')">Aggiungi F24</button> <button class="btn" onclick="UI.modal('piano')">Nuovo piano</button></span></div>
   ${riepilogo}<div class="tabs">${tabs.map(([k, l]) => `<button class="${f === k ? 'on' : ''}" onclick="UI.filtro('${k}')">${l}</button>`).join('')}</div>${body}`;
 }
+function pdfInAttesa() {
+  const docs = (S.data.docF24 || []).filter(d => d.stato === 'da_inserire');
+  if (!docs.length) return '';
+  return `<div class="card" style="margin:2px 0 12px;background:#fff7e6;border-color:#f0d9a8"><b>${docs.length === 1 ? '1 PDF caricato' : docs.length + ' PDF caricati'}, in attesa che Claude inserisca i dati</b><div class="small muted" style="margin-bottom:6px">Scrivi a Claude «ho caricato l'F24»: legge il PDF e aggiunge qui scadenze e importi, collegati al PDF originale.</div>
+    ${docs.map(d => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0"><span class="small" style="overflow-wrap:anywhere"><b>${esc(d.nome_file)}</b> · caricato da ${esc(d.caricato_da || '')} il ${fmtD(d.caricato_il)}${d.nota ? ' · ' + esc(d.nota) : ''}</span><span style="margin-left:auto"><button class="btn sm" onclick="UI.apriPdf('${d.id}')">Apri PDF</button>${puoElim() ? ` <button class="btn sm danger" onclick="UI.chiediEliminaDoc('${d.id}')">elimina</button>` : ''}</span></div>`).join('')}</div>`;
+}
 function cardPiano(p) {
   const s = statoAder(p), rs = S.data.rate.filter(r => r.piano_id === p.id);
   const pagato = sum(rs.filter(r => r.stato === 'pagata'), r => r.importo);
@@ -594,16 +610,17 @@ function cardPiano(p) {
   return `<details class="piano" ${S._open === p.id ? 'open' : ''} ontoggle="UI.toggle('${p.id}',this.open)"><summary><span class="nm">${esc(p.nome)} ${stPill}<div class="small muted">${esc(p.controparte || '')}${p.descrizione ? ' · ' + esc(p.descrizione) : ''}</div></span>
     <span class="small nowrap">${stato}</span>
     <span class="small nowrap right">residuo <b>${eur(s.residuo)}</b> su ${eur(s.totale)}<div class="bar" style="width:140px"><i class="good" style="width:${s.totale ? 100 * pagato / s.totale : 0}%"></i></div></span></summary>
-    <div class="body">${p.tipo === 'ader' ? `<div class="small muted" style="margin-bottom:6px">Prossima rata: ${s.prossima ? fmtD(s.prossima.scadenza) + ' · ' + eur2(s.prossima.importo) : '–'} · decadenza alla ${s.soglia}ª rata non pagata: contatore ${s.contatore}, margine ${s.margine}</div>` : ''}
+    <div class="body">${p.tipo === 'f24' ? pdfInAttesa() : ''}${p.tipo === 'ader' ? `<div class="small muted" style="margin-bottom:6px">Prossima rata: ${s.prossima ? fmtD(s.prossima.scadenza) + ' · ' + eur2(s.prossima.importo) : '–'} · decadenza alla ${s.soglia}ª rata non pagata: contatore ${s.contatore}, margine ${s.margine}</div>` : ''}
     ${tabellaRate(rs, false)}
     <div class="row" style="margin-top:10px"><span class="small muted">${p.tipo === 'f24' ? 'Un versamento per ogni modello F24 ricevuto dal commercialista: scadenza, importo e che cosa si paga.' : `Capitale ${eur(p.capitale_iniziale)} · ${p.n_rate || rs.length} rate ${p.cadenza_mesi === 1 ? 'mensili' : p.cadenza_mesi === 6 ? 'semestrali' : 'ogni ' + p.cadenza_mesi + ' mesi'} da ${eur2(p.rata)}${p.rata1 ? ' (prima ' + eur2(p.rata1) + ')' : ''} · dal ${fmtD(p.prima_rata)}`}</span>
     <span style="margin-left:auto">${p.tipo === 'f24' ? '' : `<select class="btn sm" onchange="UI.statoPiano('${p.id}',this.value)">${['attivo', 'in_istruttoria', 'in_istanza', 'chiuso', 'decaduto'].map(x => `<option value="${x}" ${p.stato === x ? 'selected' : ''}>${x.replace('_', ' ')}</option>`).join('')}</select> `}${p.tipo === 'f24' ? `<button class="btn sm" onclick="UI.modal('f24')">Aggiungi F24</button>` : `<button class="btn sm" onclick="UI.modal('rata','${p.id}')">Aggiungi rata</button>`}</span></div></div></details>`;
 }
+const pdfRata = r => { const d = r.documento_id && (S.data.docF24 || []).find(x => x.id === r.documento_id); return d ? `<div><button class="btn sm ghost" style="max-width:100%;white-space:normal;text-align:left;overflow-wrap:anywhere" onclick="UI.apriPdf('${d.id}')" title="Apre il PDF originale">PDF ${esc(d.nome_file)}</button></div>` : ''; };
 function tabellaRate(rs, conPiano) {
   if (!rs.length) return '<div class="muted">Nessuna rata.</div>';
   return `<div class="scroll"><table class="resp"><tr>${conPiano ? '<th>Piano</th>' : ''}<th>N.</th><th>Scadenza</th><th class="num">Importo</th><th>Stato</th><th>Pagata il</th><th>Segnata da</th><th></th></tr>
-  ${rs.map(r => `<tr>${conPiano ? `<td>${esc(r.nome)}<div class="small muted">${esc(r.controparte || '')}</div></td>` : ''}<td>${r.n}${r.n_rate ? '/' + r.n_rate : ''}</td><td class="nowrap ${r.stato_effettivo === 'da_confermare' ? 'warn' : ''}">${fmtD(r.scadenza)}</td><td class="num">${eur2(r.importo)}</td><td>${pillStato(r.stato_effettivo)}</td><td>${r.data_pagamento ? fmtD(r.data_pagamento) : ''}${r.banca ? '<span class="d2">' + esc(r.banca) + '</span>' : ''}</td><td class="small muted">${r.marcata_da ? esc(r.marcata_da) + ' · ' + fmtD(r.marcata_il) : ''}${r.nota ? '<div>' + esc(r.nota) + '</div>' : ''}</td>
-  <td class="right">${r.stato === 'pagata' ? `<button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')" title="Torna a non pagata">annulla</button>` : r.stato === 'saltata' ? `<button class="btn sm" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')">annulla</button>` : `<button class="btn sm primary" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm" onclick="UI.setRata('${r.id}','saltata')">saltata</button>`}</td></tr>`).join('')}</table></div>`;
+  ${rs.map(r => `<tr>${conPiano ? `<td>${esc(r.nome)}<div class="small muted">${esc(r.controparte || '')}</div></td>` : ''}<td>${r.n}${r.n_rate ? '/' + r.n_rate : ''}</td><td class="nowrap ${r.stato_effettivo === 'da_confermare' ? 'warn' : ''}">${fmtD(r.scadenza)}</td><td class="num">${eur2(r.importo)}</td><td>${pillStato(r.stato_effettivo)}</td><td>${r.data_pagamento ? fmtD(r.data_pagamento) : ''}${r.banca ? '<span class="d2">' + esc(r.banca) + '</span>' : ''}</td><td class="small muted">${r.marcata_da ? esc(r.marcata_da) + ' · ' + fmtD(r.marcata_il) : ''}${r.nota ? '<div>' + esc(r.nota) + '</div>' : ''}${pdfRata(r)}</td>
+  <td class="right">${r.stato === 'pagata' ? `<button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')" title="Torna a non pagata">annulla</button>` : r.stato === 'saltata' ? `<button class="btn sm" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')">annulla</button>` : `<button class="btn sm primary" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm" onclick="UI.setRata('${r.id}','saltata')">saltata</button>`}${r.tipo === 'f24' && puoElim() ? ` <button class="btn sm danger" onclick="UI.chiediEliminaRata('${r.id}')">elimina</button>` : ''}</td></tr>`).join('')}</table></div>`;
 }
 
 // ---------- Conto economico ----------
@@ -634,7 +651,7 @@ function pageCE() {
 
 // ---------- Banche e PFN ----------
 const fidoDi = (banca, linea) => (S.data.fidi || []).find(f => f.banca === banca && f.linea === linea) || {};
-const inFido = (banca, linea, campo, val, w) => `<input class="search" style="width:${w || 88}px;text-align:right;padding-left:6px;padding-right:6px" inputmode="decimal" value="${val == null || val === '' ? '' : campo === 'tasso' ? String(Number(val)).replace('.', ',') : n0.format(Number(val))}" placeholder="–" title="${campo === 'tasso' ? 'Tasso annuo in %, es. 6,5' : 'Importo accordato in euro'}" onchange="UI.fido('${banca}','${linea}','${campo}',this.value)">`;
+const inFido = (banca, linea, campo, val, w) => `<input class="search" style="width:${w || 88}px;text-align:right;padding-left:6px;padding-right:6px" inputmode="decimal" data-dec="${campo === 'tasso' ? 3 : 2}" value="${val == null || val === '' ? '' : String(Number(val)).replace('.', ',')}" placeholder="–" title="${campo === 'tasso' ? 'Tasso annuo in %, es. 6,5' : 'Importo accordato in euro'}" onchange="UI.fido('${banca}','${linea}','${campo}',this.value)">`;
 const barra = pct => pct == null ? '' : `<div class="bar" style="width:80px"><i class="${pct > 100 ? 'bad' : pct > 85 ? 'warn' : 'good'}" style="width:${Math.min(100, pct)}%"></i></div>`;
 const pc1 = (a, b) => b ? Math.round(100 * a / b) : null;
 // riga di controllo: saldo dichiarato dalla banca nel file CBI, in arancione se Fiammetta se ne discosta
@@ -751,13 +768,13 @@ function pageBanche() {
       <form class="row" onsubmit="event.preventDefault();UI.salvaSaldo(this)">
         <div class="field"><label>Data</label><input name="data" type="date" value="${OGGI}" required></div>
         <div class="field"><label>Banca</label><select name="banca">${banche.map(b => `<option>${esc(b)}</option>`).join('')}<option>Altra</option></select></div>
-        <div class="field"><label>Saldo c/c</label><input name="saldo_cc" inputmode="decimal" placeholder="es. -12.500,00"></div>
+        <div class="field"><label>Saldo c/c</label><input name="saldo_cc" inputmode="decimal" placeholder="es. -12500,00"></div>
         <div class="field"><label>Anticipi utilizzati</label><input name="anticipi_utilizzati" inputmode="decimal"></div>
         <div class="field"><label>Accordato anticipi</label><input name="accordato_anticipi" inputmode="decimal"></div>
         <div class="field"><label>Fido c/c</label><input name="fido_cc" inputmode="decimal"></div>
         <div class="field" style="flex:2 1 200px"><label>Note</label><input name="note"></div>
         <div class="field" style="flex:0 0 auto"><button class="btn primary">Salva</button></div></form>
-      ${D.saldi.length ? `<div class="scroll"><table class="resp"><tr><th>Data</th><th>Banca</th><th class="num">Saldo c/c</th><th class="num">Anticipi</th><th class="num">Accordato</th><th class="num">Fido c/c</th><th>Note</th><th></th></tr>${D.saldi.map(x => `<tr><td class="nowrap">${fmtD(x.data)}</td><td>${esc(x.banca)}</td><td class="num">${eur2(x.saldo_cc)}</td><td class="num">${eur(x.anticipi_utilizzati)}</td><td class="num">${eur(x.accordato_anticipi)}</td><td class="num">${eur(x.fido_cc)}</td><td class="small">${esc(x.note || '')}<span class="d2">${esc(x.inserito_da || '')}</span></td><td class="right"><button class="btn sm ghost" onclick="UI.eliminaSaldo(${x.id})">elimina</button></td></tr>`).join('')}</table></div>` : '<div class="muted small">Nessun saldo inserito. I saldi del portale servono per confrontare la contabilità con la banca.</div>'}</div>
+      ${D.saldi.length ? `<div class="scroll"><table class="resp"><tr><th>Data</th><th>Banca</th><th class="num">Saldo c/c</th><th class="num">Anticipi</th><th class="num">Accordato</th><th class="num">Fido c/c</th><th>Note</th><th></th></tr>${D.saldi.map(x => `<tr><td class="nowrap">${fmtD(x.data)}</td><td>${esc(x.banca)}</td><td class="num">${eur2(x.saldo_cc)}</td><td class="num">${eur(x.anticipi_utilizzati)}</td><td class="num">${eur(x.accordato_anticipi)}</td><td class="num">${eur(x.fido_cc)}</td><td class="small">${esc(x.note || '')}<span class="d2">${esc(x.inserito_da || '')}</span></td><td class="right">${puoElim() ? `<button class="btn sm ghost" onclick="UI.chiediEliminaSaldo(${x.id})">elimina</button>` : ''}</td></tr>`).join('')}</table></div>` : '<div class="muted small">Nessun saldo inserito. I saldi del portale servono per confrontare la contabilità con la banca.</div>'}</div>
   </div>`;
 }
 
@@ -784,6 +801,7 @@ function pageStato() {
       ${voce(!daAbb.length, 'Pagamenti e incassi da abbinare alle fatture in NTS', daAbb.length + (daAbb.some(x => x.accontoPer) ? ` (${daAbb.filter(x => x.accontoPer).length} hanno già la fattura dello stesso importo: ${daAbb.filter(x => x.accontoPer).map(x => (x.controparte || x.conto) + ' ft ' + x.accontoPer.numdoc).join(', ')})` : ''), link('vedi', 'partite', 'pagamenti:tutto'))}
       ${voce(!vecchie.length, 'Proforme senza collegamento sicuro, da verificare', vecchie.length, link('vedi', 'partite', 'incassi:proforme'))}
       ${voce(!D.movimenti.length, 'Segnati in Fiammetta in attesa di NTS', D.movimenti.length, link('vedi', 'partite', 'attesa'))}
+      ${voce(!(D.docF24 || []).some(d => d.stato === 'da_inserire'), 'F24 caricati in PDF, da inserire (scrivi a Claude)', (D.docF24 || []).filter(d => d.stato === 'da_inserire').length, link('Scadenziario', 'scadenziario', 'piani'))}
       ${voce(!senzaFido.length && !senzaTasso.length, 'Fidi e tassi da inserire', [senzaFido.length ? senzaFido.map(x => x.banca).join(', ') + ' (fido)' : '', senzaTasso.length ? senzaTasso.map(x => x.banca).join(', ') + ' (tasso)' : ''].filter(Boolean).join(' · ') || '0', link('Banche', 'banche', 'scoperti'))}
       ${voce(!ctr.ritardi.length, 'Conti uniti al c/c registrati in ritardo', ctr.ritardi.map(x => `${esc(x.u.descrizione)} fermo al ${fmtD(x.u.ultima_registrazione)}`).join(' · ') || '0', link('Banche', 'banche', 'liquidita'))}
       ${voce(!ctr.scarti.length, 'Saldo c/c diverso da quello della banca', ctr.scarti.map(x => `${esc(x.banca)} ${eur(Math.abs(x.r.ctrl.scarto))}`).join(' · ') || '0', link('Banche', 'banche', 'scoperti'))}
@@ -849,12 +867,19 @@ function renderModal() {
   } else if (M.type === 'rata') {
     const p = S.data.piani.find(x => x.id === M.id), rs = S.data.rate.filter(r => r.piano_id === p.id);
     const last = rs[rs.length - 1];
-    h = `<h2>Aggiungi rata · ${esc(p.nome)}</h2><form onsubmit="event.preventDefault();UI.aggiungiRata(this,'${p.id}')"><div class="row"><div class="field"><label>Numero</label><input name="n" type="number" value="${(last ? last.n : 0) + 1}" required></div><div class="field"><label>Scadenza</label><input name="scadenza" type="date" value="${last ? addMonths(last.scadenza, p.cadenza_mesi || 1) : OGGI}" required></div><div class="field"><label>Importo</label><input name="importo" inputmode="decimal" value="${p.rata || ''}" required></div></div><div class="row"><button class="btn primary">Aggiungi</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+    h = `<h2>Aggiungi rata · ${esc(p.nome)}</h2><form onsubmit="event.preventDefault();UI.aggiungiRata(this,'${p.id}')"><div class="row"><div class="field"><label>Numero</label><input name="n" type="number" value="${(last ? last.n : 0) + 1}" required></div><div class="field"><label>Scadenza</label><input name="scadenza" type="date" value="${last ? addMonths(last.scadenza, p.cadenza_mesi || 1) : OGGI}" required></div><div class="field"><label>Importo</label><input name="importo" inputmode="decimal" value="${p.rata ? String(p.rata).replace('.', ',') : ''}" required></div></div><div class="row"><button class="btn primary">Aggiungi</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
   } else if (M.type === 'f24') {
-    h = `<h2>Aggiungi un F24 da versare</h2><p class="small muted" style="margin-top:0">Un versamento per ogni modello F24 ricevuto dal commercialista. Entra nello scadenziario e nei «prossimi 30 giorni» di Oggi; si segna pagato come le altre rate. In alternativa si può mandare il PDF a Claude, che lo legge e lo inserisce.</p>
-    <form onsubmit="event.preventDefault();UI.aggiungiF24(this)"><div class="row"><div class="field"><label>Scadenza del versamento</label><input name="scadenza" type="date" required></div><div class="field"><label>Importo da versare (€)</label><input name="importo" inputmode="decimal" required></div></div>
-    <div class="field"><label>Che cosa si paga</label><input name="nota" placeholder="es. IVA ottobre 2026 + ritenute + INPS" required></div>
-    <div class="row"><button class="btn primary">Aggiungi</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+    h = `<h2>Aggiungi un F24 da versare</h2><p class="small muted" style="margin-top:0">Carica il <b>PDF originale</b> ricevuto dal commercialista: Claude lo legge e inserisce scadenze e importi, così non ci sono errori di battitura. Il PDF resta collegato al versamento e si può riaprire quando serve.</p>
+    <form onsubmit="event.preventDefault();UI.caricaF24(this)"><div class="field"><label>PDF dell'F24</label><input name="pdf" type="file" accept="application/pdf,.pdf" required></div>
+    <div class="field"><label>Nota (facoltativo)</label><input name="nota" placeholder="es. F24 di novembre: IVA e ritenute"></div>
+    <div class="row"><button class="btn primary">Carica il PDF</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>
+    <details style="margin-top:14px"><summary class="small muted" style="cursor:pointer">Non hai il PDF? Inserisci il versamento a mano</summary>
+    <form onsubmit="event.preventDefault();UI.aggiungiF24(this)" style="margin-top:10px"><div class="row"><div class="field"><label>Scadenza del versamento</label><input name="scadenza" type="date"></div><div class="field"><label>Importo da versare (€)</label><input name="importo" inputmode="decimal" placeholder="es. 1234,56"></div></div>
+    <div class="field"><label>Che cosa si paga</label><input name="nota" placeholder="es. IVA ottobre 2026 + ritenute + INPS"></div>
+    <div class="row"><button class="btn">Aggiungi a mano</button></div></form></details>`;
+  } else if (M.type === 'conferma') {
+    h = `<h2>${esc(M.titolo)}</h2><div class="card" style="margin:10px 0;background:#fbf9f6">${M.dettaglio}</div><p class="small muted" style="margin:0 0 12px">${esc(M.avviso || "L'operazione non si può annullare.")}</p>
+    <div class="row"><button type="button" class="btn" autofocus onclick="UI.closeModal()">Annulla</button><button type="button" class="btn danger" onclick="UI.esegui()">${esc(M.bottone || 'Elimina')}</button></div>`;
   } else if (M.type === 'piano') {
     h = `<h2>Nuovo piano di pagamento</h2><form onsubmit="event.preventDefault();UI.nuovoPiano(this)">
     <div class="row"><div class="field"><label>Tipo</label><select name="tipo">${Object.entries(tipoPiano).map(([k, l]) => `<option value="${k}" ${M.id === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div><div class="field" style="flex:2"><label>Nome</label><input name="nome" required placeholder="es. Mutuo Credem auto / AR123456789"></div></div>
@@ -877,6 +902,7 @@ async function guard(fn, okMsg) {
   try { await fn(); if (okMsg) toast(okMsg); } catch (e) { console.error(e); toast('Errore: ' + (e.message || e), 6000); } finally { S.busy = false; }
 }
 const chi = () => (S.me && S.me.nome) || S.email;
+const puoElim = () => !!(S.me && S.me.puo_eliminare);
 const UI = {
   go(v, arg) {
     S.view = v; S.dett = null;
@@ -920,11 +946,24 @@ const UI = {
       S.modal = null; await reloadMovimenti(); S._keepScroll = true; render();
     }, 'Segnato: resta in attesa della registrazione in NTS');
   },
+  chiediAnnullaMovimento(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    const m = (S.data.movimenti || []).find(x => x.id === id) || (S.data.proforme.map(p => p.copertura).find(c => c && c.id === id));
+    UI.chiedi({ titolo: 'Annullare questa registrazione?', bottone: 'Sì, annulla', azione: 'annullaMovimento', arg: id,
+      dettaglio: m ? `<b>${m.tipo === 'incasso' ? 'Incasso' : 'Pagamento'}</b> del ${fmtD(m.data)} · <b>${eur2(m.importo)}</b><div class="small muted">${esc(m.controparte || m.conto || '')}${m.nota ? ' · ' + esc(m.nota) : ''}</div>` : 'Registrazione segnata in Fiammetta' });
+  },
   async annullaMovimento(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
     await guard(async () => { const { error } = await S.sb.from('movimenti_app').update({ stato: 'annullato' }).eq('id', id); if (error) throw error; await reloadMovimenti(); S._keepScroll = true; render(); }, 'Annullato');
   },
+  chiediAnnullaProforma(chiave) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    const p = S.data.proforme.find(x => x.chiave === chiave); if (!p) return;
+    UI.chiedi({ titolo: 'Segnare la proforma come non valida?', bottone: 'Sì, non valida', azione: 'annullaProforma', arg: chiave, avviso: 'La proforma esce da tutti gli elenchi e dai totali (annullata o sostituita).',
+      dettaglio: `<b>Proforma n. ${p.numdoc}</b> del ${fmtD(p.datdoc)} · <b>${eur2(p.totdoc)}</b><div class="small muted">${esc(p.controparte || p.conto)}</div>` });
+  },
   async annullaProforma(chiave) {
-    if (!confirm('Segnare la proforma come non più valida (annullata o sostituita)?')) return;
+    if (!puoElim()) return UI.nonAutorizzato();
     await guard(async () => { const pf = S.data.proforme.find(p => p.chiave === chiave); const { error } = await S.sb.from('movimenti_app').insert({ tipo: 'incasso', chiave_doc: chiave, conto: pf.conto, controparte: pf.controparte, data: OGGI, importo: 0, stato: 'annullato', nota: 'proforma non valida', creato_da: chi() }); if (error) throw error; await reloadMovimenti(); S.data.proforme = S.data.proforme.filter(p => p.chiave !== chiave); S._keepScroll = true; render(); }, 'Proforma esclusa');
   },
   async setRata(id, stato) {
@@ -950,12 +989,65 @@ const UI = {
   },
   async aggiungiF24(form) {
     await guard(async () => {
-      const importo = num(form.importo.value), nota = form.nota.value.trim(); if (!importo || importo <= 0) throw new Error('importo non valido'); if (!form.scadenza.value) throw new Error('manca la scadenza');
+      const importo = num(form.importo.value), nota = form.nota.value.trim(); if (!importo || importo <= 0) throw new Error('importo non valido'); if (!form.scadenza.value) throw new Error('manca la scadenza'); if (!nota) throw new Error('scrivi che cosa si paga');
       if (!S.data.piani.some(p => p.id === 'f24')) { const r = await S.sb.from('piani').insert({ id: 'f24', tipo: 'f24', nome: 'F24 da versare', controparte: 'Agenzia delle Entrate (F24 del commercialista)', descrizione: 'Un versamento per ogni modello F24 ricevuto dal commercialista', stato: 'attivo', creato_da: chi() }); if (r.error) throw r.error; }
       const n = Math.max(0, ...S.data.rate.filter(r => r.piano_id === 'f24').map(r => r.n)) + 1;
       const { error } = await S.sb.from('rate').insert({ id: 'f24-' + n, piano_id: 'f24', n, scadenza: form.scadenza.value, importo, stato: 'futura', nota }); if (error) throw error;
       S.modal = null; await reloadRate(); S.filtroRate = 'piani'; S._open = 'f24'; render();
     }, 'F24 aggiunto allo scadenziario');
+  },
+  async caricaF24(form) {
+    await guard(async () => {
+      const f = form.pdf.files[0]; if (!f) throw new Error('scegli il PDF');
+      if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') throw new Error('il file deve essere un PDF');
+      if (f.size > 10 * 1024 * 1024) throw new Error('il PDF supera i 10 MB');
+      const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+      const percorso = 'f24/' + stamp + '-' + f.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9._-]+/g, '_').slice(-80);
+      const up = await S.sb.storage.from('documenti').upload(percorso, f, { contentType: 'application/pdf', upsert: false }); if (up.error) throw up.error;
+      const ins = await S.sb.from('documenti_f24').insert({ nome_file: f.name, percorso, nota: form.nota.value.trim() || null, caricato_da: chi() });
+      if (ins.error) { await S.sb.storage.from('documenti').remove([percorso]); throw ins.error; }
+      S.modal = null; await reloadDocF24(); S.filtroRate = 'piani'; S._open = 'f24'; render();
+    }, 'PDF caricato. Scrivi a Claude «ho caricato l\'F24» e lo inserisce');
+  },
+  async apriPdf(id) {
+    const d = (S.data.docF24 || []).find(x => x.id === id); if (!d) return toast('PDF non trovato');
+    const w = window.open('', '_blank');
+    try { const r = await S.sb.storage.from('documenti').createSignedUrl(d.percorso, 300); if (r.error) throw r.error; if (w) w.location = r.data.signedUrl; else location.href = r.data.signedUrl; }
+    catch (e) { if (w) w.close(); console.error(e); toast('Non riesco ad aprire il PDF: ' + (e.message || e), 6000); }
+  },
+  chiedi(o) { S.modal = { type: 'conferma', ...o }; render(); },
+  esegui() { const m = S.modal; S.modal = null; render(); if (m && m.azione && UI[m.azione]) UI[m.azione](m.arg); },
+  nonAutorizzato() { toast('Solo chi ha il permesso di eliminare (oggi Andrea e Miriam) può farlo', 5000); },
+  chiediEliminaRata(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    const r = S.data.rate.find(x => x.id === id); if (!r) return;
+    UI.chiedi({ titolo: 'Eliminare questa registrazione?', bottone: 'Sì, elimina', azione: 'eliminaRata', arg: id,
+      dettaglio: `<b>${esc(r.nome)}</b> · scadenza <b>${fmtD(r.scadenza)}</b> · <b>${eur2(r.importo)}</b>${r.nota ? '<div class="small muted">' + esc(r.nota) + '</div>' : ''}${r.stato === 'pagata' ? '<div class="small warn">Attenzione: è segnata come già pagata.</div>' : ''}` });
+  },
+  async eliminaRata(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    await guard(async () => {
+      const { data, error } = await S.sb.from('rate').delete().eq('id', id).select(); if (error) throw error;
+      if (!data || !data.length) throw new Error('non eliminata: non hai il permesso, oppure non esiste più');
+      await reloadRate(); S._keepScroll = true; render();
+    }, 'Registrazione eliminata');
+  },
+  chiediEliminaDoc(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    const d = (S.data.docF24 || []).find(x => x.id === id); if (!d) return;
+    const legate = S.data.rate.filter(r => r.documento_id === id).length;
+    UI.chiedi({ titolo: 'Eliminare questo PDF?', bottone: 'Sì, elimina', azione: 'eliminaDoc', arg: id, avviso: legate ? `Le ${legate} rate già inserite restano, ma perdono il collegamento al PDF. L'operazione non si può annullare.` : undefined,
+      dettaglio: `<b>${esc(d.nome_file)}</b><div class="small muted">caricato da ${esc(d.caricato_da || '')} il ${fmtD(d.caricato_il)}</div>` });
+  },
+  async eliminaDoc(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    await guard(async () => {
+      const d = (S.data.docF24 || []).find(x => x.id === id); if (!d) return;
+      const { data, error } = await S.sb.from('documenti_f24').delete().eq('id', id).select(); if (error) throw error;
+      if (!data || !data.length) throw new Error('non eliminato: non hai il permesso, oppure non esiste più');
+      await S.sb.storage.from('documenti').remove([d.percorso]);
+      await reloadDocF24(); await reloadRate(); S._keepScroll = true; render();
+    }, 'PDF eliminato');
   },
   async statoPiano(id, stato) {
     await guard(async () => { const { error } = await S.sb.from('piani').update({ stato, aggiornato_il: new Date().toISOString() }).eq('id', id); if (error) throw error; await reloadRate(); S._keepScroll = true; render(); }, 'Stato del piano aggiornato');
@@ -982,8 +1074,13 @@ const UI = {
       const r = await S.sb.from('saldi_banca').select('*').order('data', { ascending: false }).order('banca').limit(80); if (r.error) throw r.error; S.data.saldi = r.data; S._keepScroll = true; render();
     }, 'Saldo salvato');
   },
+  chiediEliminaSaldo(id) {
+    if (!puoElim()) return UI.nonAutorizzato();
+    const x = S.data.saldi.find(y => y.id === id); if (!x) return;
+    UI.chiedi({ titolo: 'Eliminare questo saldo?', bottone: 'Sì, elimina', azione: 'eliminaSaldo', arg: id, dettaglio: `<b>${esc(x.banca)}</b> del ${fmtD(x.data)} · saldo c/c <b>${eur2(x.saldo_cc)}</b>` });
+  },
   async eliminaSaldo(id) {
-    if (!confirm('Eliminare questo saldo?')) return;
+    if (!puoElim()) return UI.nonAutorizzato();
     await guard(async () => { const { error } = await S.sb.from('saldi_banca').delete().eq('id', id); if (error) throw error; S.data.saldi = S.data.saldi.filter(s => s.id !== id); S._keepScroll = true; render(); }, 'Saldo eliminato');
   },
   async parametro(chiave, valore) {
@@ -1052,6 +1149,35 @@ async function start() {
   render();
 }
 setInterval(async () => { if (S.loadedAt && !S.modal && !S.busy && !document.hidden && Date.now() - S.loadedAt > 10 * 60000) { try { await loadAll(); S._keepScroll = true; render(); } catch (e) {} } }, 60000);
+
+// ---------- Importi: sia il punto sia la virgola sono la virgola decimale ----------
+// Durante la digitazione il campo accetta solo cifre e un separatore decimale (il punto diventa virgola), con massimo 2 decimali (3 per i tassi):
+// nessun separatore delle migliaia. Sotto il campo si legge quanto verrà salvato.
+function pulisciImporto(el) {
+  const dec = Number(el.dataset.dec || 2), raw = el.value, pos = el.selectionStart == null ? raw.length : el.selectionStart;
+  let out = '', sep = false, extra = false, troppi = false, nuova = null;
+  for (let i = 0; i < raw.length; i++) {
+    if (i === pos) nuova = out.length;
+    const ch = raw[i];
+    if (/\d/.test(ch)) { if (sep && out.split(',')[1].length >= dec) { troppi = true; continue; } out += ch; }
+    else if (ch === ',' || ch === '.') { if (sep) { extra = true; continue; } sep = true; out += out === '' || out === '-' ? '0,' : ','; }
+    else if (ch === '-' && out === '') out = '-';
+  }
+  if (nuova == null) nuova = out.length;
+  if (out !== raw) { el.value = out; try { el.setSelectionRange(nuova, nuova); } catch (e) {} }
+  if (el.closest('td')) return;
+  let h = el.nextElementSibling; if (!h || !h.classList.contains('hint')) { h = document.createElement('div'); h.className = 'hint'; el.insertAdjacentElement('afterend', h); }
+  const v = num(out);
+  if (extra || troppi) { h.className = 'hint bad'; h.textContent = (extra ? 'Un solo separatore decimale (. oppure ,). ' : '') + (troppi ? `Massimo ${dec} decimali. ` : '') + 'Scrivi 1234,56, senza punto delle migliaia.' + (v == null ? '' : ' Ora vale ' + (dec > 2 ? String(v).replace('.', ',') + ' %' : eur2(v)) + '.'); }
+  else { h.className = 'hint'; h.textContent = v == null || out === '-' ? '' : '= ' + (dec > 2 ? String(v).replace('.', ',') + ' %' : eur2(v)); }
+}
+document.addEventListener('input', e => { const el = e.target; if (el && el.matches && el.matches('input[inputmode=decimal]')) pulisciImporto(el); });
+// «1.234,56» incollato (formato italiano con il punto delle migliaia) viene letto come 1234,56
+document.addEventListener('paste', e => {
+  const el = e.target; if (!el || !el.matches || !el.matches('input[inputmode=decimal]')) return;
+  const t = ((e.clipboardData || window.clipboardData).getData('text') || '').trim();
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) { e.preventDefault(); el.value = t.replace(/\./g, ''); pulisciImporto(el); }
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.modal) UI.closeModal(); });
 (function init() {
   const h = new URLSearchParams(location.hash.replace(/^#/, ''));
