@@ -33,14 +33,33 @@ h3{font-size:15px;font-weight:650;color:var(--muted);text-transform:uppercase;le
 .main{padding:22px 26px 60px;max-width:1480px;width:100%;min-width:0}
 .head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
-.grid>*,.stack>*,.row4>*,.row2>*,.row23>*,.row3>*,.split>*{min-width:0}
+.grid>*,.stack>*,.row4>*,.row2>*,.row23>*,.row3>*,.row5>*,.row6>*,.split>*{min-width:0}
+.row5{display:grid;gap:14px;grid-template-columns:repeat(5,minmax(0,1fr))}
+.row6{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.evl{border-top:1px solid var(--line)}
+.ev{display:grid;grid-template-columns:96px minmax(0,1fr) auto 104px;gap:10px;align-items:center;padding:7px 8px;border-bottom:1px solid var(--line);font-size:14px}
+.ev .v{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ev .d{white-space:nowrap}
+.ev.sub{background:#fbf9f6;font-size:13.5px}
+details.evg>summary{list-style:none;cursor:pointer}
+details.evg>summary::-webkit-details-marker{display:none}
+details.evg>summary .d::after{content:' ▸';color:var(--muted)}
+details.evg[open]>summary .d::after{content:' ▾'}
+details.evg>summary:hover{background:#fbf8f4}
+tr.clic{cursor:pointer}tr.clic:hover td{background:#fbf6ef}tr.clic.on td{background:#fdf0e6}
+tr.clic td:first-child{color:var(--accent)}tr.clic.tot td:first-child{color:inherit}
+.frec{color:var(--muted);font-size:12px}
+tr.memo td{color:var(--muted);font-style:italic;font-size:13px}
+.card.dett{border-color:#f0b48f;box-shadow:0 2px 10px rgba(217,72,15,.08)}
+td.num .d2{white-space:normal}
+@media (max-width:1100px){.card.dett table{font-size:13px}.card.dett th,.card.dett td{padding:6px 5px}}
 .stack{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
 .row4{display:grid;gap:14px;grid-template-columns:repeat(4,minmax(0,1fr))}
 .row2{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr))}
 .row23{display:grid;gap:14px;grid-template-columns:minmax(0,2fr) minmax(0,3fr)}
 .row3{display:grid;gap:14px;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.5fr)}
 .split{display:grid;gap:22px;grid-template-columns:minmax(0,1fr) minmax(0,2fr);align-items:start}
-@media (max-width:1280px){.row4{grid-template-columns:repeat(2,minmax(0,1fr))}.row3{grid-template-columns:repeat(2,minmax(0,1fr))}.row3>.full-md{grid-column:1/-1}}
+@media (max-width:1280px){.row4{grid-template-columns:repeat(2,minmax(0,1fr))}.row3{grid-template-columns:repeat(2,minmax(0,1fr))}.row3>.full-md{grid-column:1/-1}.row5{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:1080px){.row23{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:1320px){.split{grid-template-columns:minmax(0,1fr)}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 2px rgba(40,30,20,.04)}
@@ -111,7 +130,7 @@ td .d2{display:block;font-size:12.5px;color:var(--muted);font-weight:400}
   .shell{grid-template-columns:minmax(0,1fr)}
   .side{position:static;height:auto;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:10px 12px;gap:8px}
   .brand{padding:0}.brand small{display:none}.brand b{font-size:17px}
-  .nav{grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+  .nav{grid-column:1/-1;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
   .nav button{padding:8px 6px;text-align:center;font-size:13.5px;line-height:1.2;min-height:40px}
   .side .foot{grid-column:2;grid-row:1;margin:0;padding:0}
   .side .foot .info{display:none}
@@ -121,7 +140,9 @@ td .d2{display:block;font-size:12.5px;color:var(--muted);font-weight:400}
   .kpi{font-size:24px}
 }
 @media (max-width:700px){
-  .nav{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .nav{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .row5{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ev{grid-template-columns:76px minmax(0,1fr) 92px;gap:8px;padding:8px 4px}.ev .k{display:none}
   .side .foot .act .pw{display:none}
   .row4,.row2,.row3{grid-template-columns:minmax(0,1fr)}
   .card{padding:12px 13px}
