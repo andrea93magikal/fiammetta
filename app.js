@@ -191,8 +191,10 @@ function statoProforme() {
   D.proforme.forEach(p => {
     const t = p.tappa, ab = D.abitudini[p.conto];
     p.abitudine = ab ? (ab.dopoSolito ? 'dopo' : 'prima') : null; p.abitudineDati = ab || null;
+    // fattura ancora aperta in NTS ma già pagata con un acconto non abbinato: per Andrea la proforma è chiusa
+    p.accontata = t === 'fatturata' && p.fatture.length > 0 && p.fatture.every(f => { const part = partiteDellaFattura(f); return part.length > 0 && part.every(x => x.accontoDa); });
     p.stato = p.copertura ? ((p.copertura.stato === 'annullato' || Number(p.copertura.importo) === 0) ? 'annullata' : 'incassata')
-      : t === 'chiusa' ? 'chiusa' : t === 'fatturata' ? 'fatturata' : t === 'doppia' ? 'doppia' : p.pagata ? 'pagata'
+      : t === 'chiusa' || p.accontata ? 'chiusa' : t === 'fatturata' ? 'fatturata' : t === 'doppia' ? 'doppia' : p.pagata ? 'pagata'
       : t === 'da_spedire' ? 'attesa' : t === 'spedita' ? 'da_fatturare'
       : t === 'senza_ordine' ? (giorni(p.datdoc, OGGI) > 120 ? 'verifica' : 'attesa') : 'verifica';
     // quando si incassa: chi paga di solito dopo la consegna, dopo la consegna prevista (più i giorni di ritardo abituali); gli altri subito
@@ -207,7 +209,7 @@ function statoProforme() {
 const norm = s =>(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const PAROLE_VUOTE = ['srl', 'spa', 'snc', 'sas', 'unipersonale', 'societa', 'socio', 'unico', 'store', 'group', 'italia'];
 const nomeIn = (nome, testo) => norm(nome).split(' ').filter(w => w.length > 3 && !PAROLE_VUOTE.includes(w)).slice(0, 2).some(w => testo.includes(' ' + w + ' '));
-const docRif = s => s.daAbbinare ? 'da abbinare' : s.apertura ? 'saldo 2025' : (s.numdoc ? 'ft ' + s.numdoc : '');
+const docRif = s => s.daAbbinare ? (s.accontoPer ? 'da abbinare a ft ' + s.accontoPer.numdoc : 'da abbinare') : s.apertura ? 'saldo 2025' : (s.numdoc ? 'ft ' + s.numdoc : '');
 function arricchisci() {
   const D = S.data;
   const copertaPartita = {}, copertaDoc = {};
@@ -215,7 +217,7 @@ function arricchisci() {
   const pianiForn = D.piani.filter(p => p.tipo === 'fornitore' && p.stato === 'attivo');
   const inPiano = nome => { const n = norm(nome); if (!n) return null; return pianiForn.find(p => { const c = norm(p.controparte || p.nome); const k = c.split(' ')[0]; return c && ((' ' + n + ' ').includes(' ' + c + ' ') || (n.length > 3 && (' ' + c + ' ').includes(' ' + n + ' ')) || (k.length > 3 && (n === k || n.startsWith(k + ' ')))); }); };
   D.scad.forEach(s => {
-    s.importo = Number(s.importo); s.copertura = copertaPartita[s.chiave] || null; s.banca_pag = null;
+    s.importo = Number(s.importo); s.copertura = copertaPartita[s.chiave] || null; s.banca_pag = null; s.accontoDa = null; s.accontoPer = null;
     s.daAbbinare = /\|1900\|/.test(s.chiave); // pagamento o incasso registrato in NTS senza abbinarlo alla fattura
     s.apertura = /\|2025\|\|9999\|/.test(s.chiave) || (s.numdoc === 0 && s.datsca <= '2026-01-01' && !s.daAbbinare);
     const r = D.R[s.conto];
@@ -223,13 +225,19 @@ function arricchisci() {
     s.ritardo = giorni(s.attesa, OGGI);
     s.piano = s.tipo_cf === 'F' ? inPiano(s.controparte) : null;
   });
+  // Acconti e incassi che NTS ha registrato senza abbinarli alla fattura (partite «da abbinare»): se l'importo coincide con una fattura aperta
+  // dello stesso cliente, la fattura è già pagata. Si abbinano uno a uno e le due partite si compensano (stessa data attesa, così cadono nello stesso gruppo).
+  abbina(D.scad.filter(s => s.tipo_cf === 'C' && s.daAbbinare && s.importo < 0 && !s.copertura),
+    D.scad.filter(s => s.tipo_cf === 'C' && !s.daAbbinare && !s.apertura && s.importo > 0 && !s.copertura),
+    (c, f) => c.conto === f.conto ? { a: -c.importo, b: f.importo, dd: Math.abs(giorni(c.datdoc || c.datsca, f.datdoc || f.datsca)) } : null, [TOL_ESATTA])
+    .forEach((f, c) => { f.accontoDa = c; c.accontoPer = f; c.attesa = f.attesa; c.ritardo = f.ritardo; });
   D.proforme.forEach(p => { p.totdoc = Number(p.totdoc); p.copertura = copertaDoc[p.chiave] || null; p.banca_pag = null; p.pagata = null; p.pagata_da = null; });
   // Movimenti bancari importati in NTS dopo l'ultima registrazione: li riconosco per importo (e nome, se c'è nella descrizione).
   // Una partita riconosciuta esce da scaduti e scadenze: il movimento è già nella liquidità stimata.
   const usate = new Set(), nuovi = D.nuovi || [];
   nuovi.forEach(m => { m.abb = null; m.addebito = Number(m.addebito) || 0; m.accredito = Number(m.accredito) || 0; });
   const forn = D.scad.filter(s => s.tipo_cf === 'F' && s.importo < 0 && !s.piano && !s.copertura);
-  const cli = D.scad.filter(s => s.tipo_cf === 'C' && s.importo > 0 && !s.copertura);
+  const cli = D.scad.filter(s => s.tipo_cf === 'C' && s.importo > 0 && !s.copertura && !s.accontoDa);
   nuovi.filter(m => m.addebito > 0).forEach(m => {
     const c = forn.filter(s => !usate.has(s.chiave) && Math.abs(-s.importo - m.addebito) < 0.01 && giorni(s.datsca, m.dataoperaz) <= 45 && giorni(s.datsca, m.dataoperaz) >= -10)
       .sort((a, b) => Math.abs(giorni(a.datsca, m.dataoperaz)) - Math.abs(giorni(b.datsca, m.dataoperaz)))[0];
@@ -350,8 +358,8 @@ function ceAnno(anno) {
 
 // ---------- Componenti ----------
 const pillStato = s => ({ pagata: '<span class="pill good">pagata</span>', saltata: '<span class="pill bad">saltata</span>', da_confermare: '<span class="pill warn">da confermare</span>', futura: '<span class="pill plain">futura</span>' }[s] || esc(s));
-const tipoPiano = { finanziamento: 'Finanziamenti', simest: 'SIMEST', fornitore: 'Piani di rientro fornitori', ader: 'Rateizzazioni AdER', soci: 'Finanziamento soci', altro: 'Altro' };
-const tipoPiano1 = { finanziamento: 'finanziamento', simest: 'SIMEST', fornitore: 'piano fornitore', ader: 'AdER', soci: 'soci', altro: 'altro' };
+const tipoPiano = { finanziamento: 'Finanziamenti', simest: 'SIMEST', fornitore: 'Piani di rientro fornitori', ader: 'Rateizzazioni AdER', soci: 'Finanziamento soci', f24: 'F24 da versare', altro: 'Altro' };
+const tipoPiano1 = { finanziamento: 'finanziamento', simest: 'SIMEST', fornitore: 'piano fornitore', ader: 'AdER', soci: 'soci', f24: 'F24', altro: 'altro' };
 const tipoBanca = { cc: 'conto corrente', sbf: 'incassi / SBF', accantonamento: 'accantonamento', anticipi: 'anticipi', cassa: 'cassa' };
 function nomeBanca(d) { d = (d || '').toLowerCase(); if (d.includes('verona')) return 'BPER Verona'; if (d.includes('emilia') || d.startsWith('bper')) return 'BPER'; if (d.includes('padana')) return 'Cassa Padana'; if (d.includes('credem')) return 'Credem'; if (d.includes('sondrio')) return 'Pop. Sondrio'; if (d.includes('valsabbina')) return 'Valsabbina'; if (d.includes('cassa')) return 'Cassa contanti'; return 'Altro'; }
 const link = (testo, view, arg) => `<a href="#" class="lnk" onclick="UI.go('${view}'${arg ? ",'" + arg + "'" : ''});return false">${testo}</a>`;
@@ -403,7 +411,7 @@ function pageOggi() {
   const usciteRate = sum(rate30, r => r.importo), usciteForn = -sum(forn30, x => x.importo), incassi = sum(cli30, x => x.importo), incProf = sum(prof, p => p.totdoc);
   const daConf = D.rate.filter(r => r.stato_effettivo === 'da_confermare' && r.stato_piano === 'attivo');
   const ader = D.piani.filter(p => p.tipo === 'ader' && p.stato === 'attivo').map(p => ({ p, s: statoAder(p) }));
-  const eventi = [...rate30.map(r => ({ d: r.scadenza, t: r.nome + (r.n_rate ? ` · rata ${r.n}/${r.n_rate}` : ''), v: -r.importo, k: tipoPiano1[r.tipo] || r.tipo })),
+  const eventi = [...rate30.map(r => ({ d: r.scadenza, t: r.tipo === 'f24' ? 'F24' + (r.nota ? ' · ' + r.nota : '') : r.nome + (r.n_rate ? ` · rata ${r.n}/${r.n_rate}` : ''), v: -r.importo, k: tipoPiano1[r.tipo] || r.tipo })),
     ...forn30.map(x => ({ d: x.datsca, t: (x.controparte || x.conto) + (x.numdoc ? ` · ft ${x.numdoc}` : ''), v: x.importo, k: 'fornitore' })),
     ...cli30.map(x => ({ d: x.attesa, t: (x.controparte || x.conto) + (x.numdoc ? ` · ft ${x.numdoc}` : '') + (x.attesa !== x.datsca ? ' · regola cliente' : ''), v: x.importo, k: 'cliente' }))];
   const perData = {}; eventi.forEach(e => (perData[e.d] = perData[e.d] || []).push(e));
@@ -435,7 +443,7 @@ function pageOggi() {
       ${inBanca.length ? `<div class="sub">${link(inBanca.length + ' pagamenti e incassi', 'partite', 'banca')} già passati in banca, da registrare in NTS: non contati</div>` : ''}</div>
   </div>
   <div class="card"><h3>Prossimi 30 giorni (fino al ${fmtD(fine)})</h3>
-    <div class="row4" style="margin-bottom:12px">${kpiBox('Uscite', '− ' + eur(usciteRate + usciteForn), `rate e piani ${eur(usciteRate)} · ${link('fornitori in scadenza', 'partite', 'pagamenti:prossime')} ${eur(usciteForn)}`, 'bad')}${kpiBox('Incassi attesi', '+ ' + eur(incassi), `${link('fatture ai clienti', 'partite', 'incassi:prossime')} (${cli30.length})`, 'good')}${kpiBox('Proforme da incassare', '+ ' + eur(incProf), `${link(prof.length + ' proforme', 'partite', 'incassi:proforme')}, ordini non ancora fatturati${profTutte.length > prof.length ? ` · altre ${profTutte.length - prof.length} dopo i 30 giorni (clienti che pagano dopo la consegna)` : ''}`, 'good')}${kpiBox('Saldo netto dei conti a fine periodo', eur(nettoFine), `liquidità − scoperti di c/c (oggi ${eur(netto)}), senza proforme, stipendi, F24 e spese correnti`, nettoFine < 0 ? 'warn' : '')}</div>
+    <div class="row4" style="margin-bottom:12px">${kpiBox('Uscite', '− ' + eur(usciteRate + usciteForn), `rate, F24 e piani ${eur(usciteRate)} · ${link('fornitori in scadenza', 'partite', 'pagamenti:prossime')} ${eur(usciteForn)}`, 'bad')}${kpiBox('Incassi attesi', '+ ' + eur(incassi), `${link('fatture ai clienti', 'partite', 'incassi:prossime')} (${cli30.length})`, 'good')}${kpiBox('Proforme da incassare', '+ ' + eur(incProf), `${link(prof.length + ' proforme', 'partite', 'incassi:proforme')}, ordini non ancora fatturati${profTutte.length > prof.length ? ` · altre ${profTutte.length - prof.length} dopo i 30 giorni (clienti che pagano dopo la consegna)` : ''}`, 'good')}${kpiBox('Saldo netto dei conti a fine periodo', eur(nettoFine), `liquidità − scoperti di c/c (oggi ${eur(netto)}), senza proforme, stipendi, F24 e spese correnti`, nettoFine < 0 ? 'warn' : '')}</div>
     ${elenco ? `<div class="evl">${elenco}</div><div class="small muted" style="margin-top:6px">Le date con più movimenti si aprono con un clic.</div>` : '<div class="muted">Nessuna scadenza nei prossimi 30 giorni.</div>'}</div>
   <div class="card"><h3>Rateizzazioni AdER</h3>${ader.length ? `<ul class="list">${ader.map(({ p, s }) => `<li><div><b>${esc(p.nome)}</b><div class="d">${s.pagate}/${s.tot} pagate · contatore <b>${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="warn">${s.daConf} scadute da confermare</span>` : ''}) · residuo ${eur(s.residuo)} · prossima ${s.prossima ? fmtD(s.prossima.scadenza) + ' ' + eur2(s.prossima.importo) : '–'}</div><div class="bar"><i class="${s.margine <= 1 ? 'bad' : s.margine <= 3 ? 'warn' : 'good'}" style="width:${Math.min(100, 100 * s.contatore / s.soglia)}%"></i></div></div><div class="right">${s.margine <= 1 ? '<span class="pill bad">decadenza vicina</span>' : s.margine <= 3 ? '<span class="pill warn">attenzione</span>' : '<span class="pill good">regolare</span>'}</div></li>`).join('')}</ul>` : '<div class="muted">Nessun piano AdER attivo.</div>'}<div class="small muted" style="margin-top:8px">Contatore = rate saltate + rate scadute non ancora confermate, come nel cruscotto storico: una rata scaduta conta finché non viene segnata pagata. Residuo = tutte le rate non pagate, saltate comprese.</div></div>
   </div>`;
@@ -456,7 +464,8 @@ function catenaProforma(p) {
   const r = [], o = p.ordine;
   if (o) r.push(`ordine n. ${o.numord} del ${fmtD(o.datord)}${o.flevas === 'S' ? '' : ' · consegna prevista ' + fmtD(o.datcons)}${Math.abs(o.totdoc - p.totdoc) > 0.5 ? ' · ' + eur2(o.totdoc) : ''}`);
   p.bolle.slice(0, 3).forEach(b => r.push(`bolla n. ${b.numdoc} del ${fmtD(b.datdoc)}`));
-  p.fatture.forEach(f => r.push(`fattura n. ${f.numdoc} del ${fmtD(f.datdoc)} · ${f.aperto > 0.005 ? '<b>da incassare ' + eur2(f.aperto) + '</b>' + (f.scadenza ? ' entro ' + fmtD(f.scadenza) : '') : 'incassata' + (f.incassata_il ? ' ' + fmtD(f.incassata_il) : '')}`));
+  p.fatture.forEach(f => { const ac = partiteDellaFattura(f).map(x => x.accontoDa).find(Boolean);
+    r.push(`fattura n. ${f.numdoc} del ${fmtD(f.datdoc)} · ${f.aperto > 0.005 ? (ac ? `<b>già pagata</b> con l'acconto del ${fmtD(ac.datdoc || ac.datsca)} (${eur2(-ac.importo)}), da abbinare in NTS` : '<b>da incassare ' + eur2(f.aperto) + '</b>' + (f.scadenza ? ' entro ' + fmtD(f.scadenza) : '')) : 'incassata' + (f.incassata_il ? ' ' + fmtD(f.incassata_il) : '')}`); });
   if (!r.length) r.push('<span class="muted">nessun ordine né bolla collegati</span>');
   return r.map(x => `<span class="d2">${x}</span>`).join('');
 }
@@ -471,7 +480,7 @@ function statoProforma(p) {
     const part = p.fatture.flatMap(partiteDellaFattura), visto = part.length && part.every(x => x.copertura || x.banca_pag);
     return `<span class="pill plain">fatturata ${fmtD(p.fatturata_il)}</span><span class="d2">${p.fatture.length ? (visto ? 'incasso già visto in banca o segnato in Fiammetta' : 'già tra le fatture da incassare: non si conta due volte') : 'fattura non collegata'}</span>`;
   }
-  if (s === 'chiusa') return `<span class="pill good">chiusa</span><span class="d2">fattura incassata</span>`;
+  if (s === 'chiusa') return `<span class="pill good">chiusa</span><span class="d2">${p.accontata ? 'fattura pagata con un acconto che in NTS non è ancora abbinato alla fattura: va abbinato in prima nota' : 'fattura incassata'}</span>`;
   if (s === 'doppia') return `<span class="pill plain">doppia</span><span class="d2">stesso ordine o bolla della proforma n. ${p.doppia.numdoc}</span>`;
   if (s === 'verifica') return `<span class="pill warn">da verificare</span><span class="d2">${p.tappa === 'evasa_nd' ? 'ordine evaso ma bolla e fattura non trovate' : 'nessun ordine, bolla o pagamento collegati da più di 120 giorni'}</span>`;
   if (s === 'incassata') return `<span class="pill good">incassata ${fmtD(p.copertura.data)}</span>`;
@@ -549,11 +558,11 @@ function pagePartite() {
 function tabellaPartite(rows, cli) {
   rows = rows.slice().sort((a, b) => (cli ? a.attesa : a.datsca).localeCompare(cli ? b.attesa : b.datsca));
   return `<div class="scroll"><table class="resp"><tr><th>Documento</th><th>Scadenza NTS</th>${cli ? '<th>Attesa</th>' : ''}<th>Ritardo</th><th class="num">Importo</th><th>Pagamento e banca</th><th></th></tr>
-  ${rows.map(s => { const rit = cli ? s.ritardo : giorni(s.datsca, OGGI); const d = cli ? s.attesa : s.datsca; return `<tr><td>${s.daAbbinare ? `<span class="pill warn" title="In NTS il ${cli ? 'pagamento del cliente' : 'pagamento al fornitore'} è registrato ma non abbinato alla fattura: va abbinato in prima nota">${cli ? 'incasso' : 'pagamento'} da abbinare</span>` : s.apertura ? '<span class="pill plain">saldo 2025</span>' : (s.numdoc ? '<span class="nowrap">ft ' + esc(String(s.numdoc)) + (s.alfdoc && s.alfdoc !== '00' ? '/' + esc(s.alfdoc) : '') + '</span> <span class="nowrap">del ' + fmtD(s.datdoc) + '</span>' : '–')}${s.insolu === 'S' ? ' <span class="pill bad">insoluto</span>' : ''}${s.flant === 'S' ? ' <span class="pill plain">anticipata</span>' : ''}${s.piano ? ' <span class="pill plain">piano ' + esc(s.piano.nome) + '</span>' : ''}</td><td class="nowrap">${fmtD(s.datsca)}</td>${cli ? `<td class="nowrap ${s.attesa !== s.datsca ? 'muted' : ''}">${fmtD(s.attesa)}</td>` : ''}<td class="nowrap ${rit > 0 && d < OGGI ? (rit > 60 ? 'bad' : 'warn') : 'muted'}">${d < OGGI ? rit + ' gg' : 'tra ' + (-rit) + ' gg'}</td><td class="num ${s.importo < 0 ? 'muted' : ''}">${eur2(cli ? s.importo : -s.importo)}</td><td class="small">${esc(s.pagamento || '')}${s.banca ? `<span class="d2">${esc(nomeBanca(s.banca) === 'Altro' ? s.banca : nomeBanca(s.banca))}</span>` : ''}</td><td class="right"><button class="btn sm ${cli ? 'primary' : ''}" onclick="UI.modal('incasso','pt:${s.chiave}')">${cli ? 'Incassato' : 'Pagato'}</button></td></tr>`; }).join('')}</table></div>`;
+  ${rows.map(s => { const rit = cli ? s.ritardo : giorni(s.datsca, OGGI); const d = cli ? s.attesa : s.datsca; return `<tr><td>${s.daAbbinare ? `<span class="pill warn" title="In NTS il ${cli ? 'pagamento del cliente' : 'pagamento al fornitore'} è registrato ma non abbinato alla fattura: va abbinato in prima nota">${cli ? 'incasso' : 'pagamento'} da abbinare</span>` : s.apertura ? '<span class="pill plain">saldo 2025</span>' : (s.numdoc ? '<span class="nowrap">ft ' + esc(String(s.numdoc)) + (s.alfdoc && s.alfdoc !== '00' ? '/' + esc(s.alfdoc) : '') + '</span> <span class="nowrap">del ' + fmtD(s.datdoc) + '</span>' : '–')}${s.insolu === 'S' ? ' <span class="pill bad">insoluto</span>' : ''}${s.flant === 'S' ? ' <span class="pill plain">anticipata</span>' : ''}${s.piano ? ' <span class="pill plain">piano ' + esc(s.piano.nome) + '</span>' : ''}${s.accontoDa ? ` <span class="pill good" title="In NTS c'è un acconto o un incasso dello stesso importo non abbinato alla fattura: la fattura è già pagata, va solo abbinata in prima nota">pagata con acconto del ${fmtD(s.accontoDa.datdoc || s.accontoDa.datsca)}</span>` : ''}${s.accontoPer ? ` <span class="small muted nowrap">per ft ${esc(String(s.accontoPer.numdoc))}</span>` : ''}</td><td class="nowrap">${fmtD(s.datsca)}</td>${cli ? `<td class="nowrap ${s.attesa !== s.datsca ? 'muted' : ''}">${fmtD(s.attesa)}</td>` : ''}<td class="nowrap ${rit > 0 && d < OGGI ? (rit > 60 ? 'bad' : 'warn') : 'muted'}">${d < OGGI ? rit + ' gg' : 'tra ' + (-rit) + ' gg'}</td><td class="num ${s.importo < 0 ? 'muted' : ''}">${eur2(cli ? s.importo : -s.importo)}</td><td class="small">${esc(s.pagamento || '')}${s.banca ? `<span class="d2">${esc(nomeBanca(s.banca) === 'Altro' ? s.banca : nomeBanca(s.banca))}</span>` : ''}</td><td class="right">${s.accontoDa || s.accontoPer ? '<span class="small muted">compensate</span>' : `<button class="btn sm ${cli ? 'primary' : ''}" onclick="UI.modal('incasso','pt:${s.chiave}')">${cli ? 'Incassato' : 'Pagato'}</button>`}</td></tr>`; }).join('')}</table></div>`;
 }
 
 // ---------- Scadenziario ----------
-const ORDINE_PIANI = ['ader', 'finanziamento', 'simest', 'soci', 'fornitore', 'altro'];
+const ORDINE_PIANI = ['f24', 'ader', 'finanziamento', 'simest', 'soci', 'fornitore', 'altro'];
 function pageScadenziario() {
   const D = S.data, f = S.filtroRate;
   const tabs = [['piani', 'Per piano'], ['prossime', 'Prossimi 60 giorni'], ['conferma', 'Da confermare'], ['tutte', 'Tutte le rate']];
@@ -572,7 +581,7 @@ function pageScadenziario() {
     if (f === 'tutte') rs = D.rate;
     body = `<div class="card">${tabellaRate(rs, true)}<div class="small muted" style="margin-top:8px">${rs.length} rate · totale ${eur(sum(rs, r => r.importo))}</div></div>`;
   }
-  return `<div class="head"><h2>Scadenziario</h2><button class="btn primary" onclick="UI.modal('piano')">Nuovo piano</button></div>
+  return `<div class="head"><h2>Scadenziario</h2><span><button class="btn primary" onclick="UI.modal('f24')">Aggiungi F24</button> <button class="btn" onclick="UI.modal('piano')">Nuovo piano</button></span></div>
   ${riepilogo}<div class="tabs">${tabs.map(([k, l]) => `<button class="${f === k ? 'on' : ''}" onclick="UI.filtro('${k}')">${l}</button>`).join('')}</div>${body}`;
 }
 function cardPiano(p) {
@@ -587,8 +596,8 @@ function cardPiano(p) {
     <span class="small nowrap right">residuo <b>${eur(s.residuo)}</b> su ${eur(s.totale)}<div class="bar" style="width:140px"><i class="good" style="width:${s.totale ? 100 * pagato / s.totale : 0}%"></i></div></span></summary>
     <div class="body">${p.tipo === 'ader' ? `<div class="small muted" style="margin-bottom:6px">Prossima rata: ${s.prossima ? fmtD(s.prossima.scadenza) + ' · ' + eur2(s.prossima.importo) : '–'} · decadenza alla ${s.soglia}ª rata non pagata: contatore ${s.contatore}, margine ${s.margine}</div>` : ''}
     ${tabellaRate(rs, false)}
-    <div class="row" style="margin-top:10px"><span class="small muted">Capitale ${eur(p.capitale_iniziale)} · ${p.n_rate || rs.length} rate ${p.cadenza_mesi === 1 ? 'mensili' : p.cadenza_mesi === 6 ? 'semestrali' : 'ogni ' + p.cadenza_mesi + ' mesi'} da ${eur2(p.rata)}${p.rata1 ? ' (prima ' + eur2(p.rata1) + ')' : ''} · dal ${fmtD(p.prima_rata)}</span>
-    <span style="margin-left:auto"><select class="btn sm" onchange="UI.statoPiano('${p.id}',this.value)">${['attivo', 'in_istruttoria', 'in_istanza', 'chiuso', 'decaduto'].map(x => `<option value="${x}" ${p.stato === x ? 'selected' : ''}>${x.replace('_', ' ')}</option>`).join('')}</select> <button class="btn sm" onclick="UI.modal('rata','${p.id}')">Aggiungi rata</button></span></div></div></details>`;
+    <div class="row" style="margin-top:10px"><span class="small muted">${p.tipo === 'f24' ? 'Un versamento per ogni modello F24 ricevuto dal commercialista: scadenza, importo e che cosa si paga.' : `Capitale ${eur(p.capitale_iniziale)} · ${p.n_rate || rs.length} rate ${p.cadenza_mesi === 1 ? 'mensili' : p.cadenza_mesi === 6 ? 'semestrali' : 'ogni ' + p.cadenza_mesi + ' mesi'} da ${eur2(p.rata)}${p.rata1 ? ' (prima ' + eur2(p.rata1) + ')' : ''} · dal ${fmtD(p.prima_rata)}`}</span>
+    <span style="margin-left:auto">${p.tipo === 'f24' ? '' : `<select class="btn sm" onchange="UI.statoPiano('${p.id}',this.value)">${['attivo', 'in_istruttoria', 'in_istanza', 'chiuso', 'decaduto'].map(x => `<option value="${x}" ${p.stato === x ? 'selected' : ''}>${x.replace('_', ' ')}</option>`).join('')}</select> `}${p.tipo === 'f24' ? `<button class="btn sm" onclick="UI.modal('f24')">Aggiungi F24</button>` : `<button class="btn sm" onclick="UI.modal('rata','${p.id}')">Aggiungi rata</button>`}</span></div></div></details>`;
 }
 function tabellaRate(rs, conPiano) {
   if (!rs.length) return '<div class="muted">Nessuna rata.</div>';
@@ -772,7 +781,7 @@ function pageStato() {
     <div class="card"><h3>Da sistemare</h3><ul class="list">
       ${voce(!daConf.length, 'Rate scadute senza esito', daConf.length, link('Scadenziario', 'scadenziario', 'conferma'))}
       ${voce(!nuovi.length, 'Movimenti in banca da registrare in NTS', nuovi.length + (nuovi.length ? ` (${nuovi.filter(m => m.abb).length} riconosciuti)` : ''), link('vedi', 'partite', 'banca'))}
-      ${voce(!daAbb.length, 'Pagamenti e incassi da abbinare alle fatture in NTS', daAbb.length, link('vedi', 'partite', 'pagamenti:tutto'))}
+      ${voce(!daAbb.length, 'Pagamenti e incassi da abbinare alle fatture in NTS', daAbb.length + (daAbb.some(x => x.accontoPer) ? ` (${daAbb.filter(x => x.accontoPer).length} hanno già la fattura dello stesso importo: ${daAbb.filter(x => x.accontoPer).map(x => (x.controparte || x.conto) + ' ft ' + x.accontoPer.numdoc).join(', ')})` : ''), link('vedi', 'partite', 'pagamenti:tutto'))}
       ${voce(!vecchie.length, 'Proforme senza collegamento sicuro, da verificare', vecchie.length, link('vedi', 'partite', 'incassi:proforme'))}
       ${voce(!D.movimenti.length, 'Segnati in Fiammetta in attesa di NTS', D.movimenti.length, link('vedi', 'partite', 'attesa'))}
       ${voce(!senzaFido.length && !senzaTasso.length, 'Fidi e tassi da inserire', [senzaFido.length ? senzaFido.map(x => x.banca).join(', ') + ' (fido)' : '', senzaTasso.length ? senzaTasso.map(x => x.banca).join(', ') + ' (tasso)' : ''].filter(Boolean).join(' · ') || '0', link('Banche', 'banche', 'scoperti'))}
@@ -841,6 +850,11 @@ function renderModal() {
     const p = S.data.piani.find(x => x.id === M.id), rs = S.data.rate.filter(r => r.piano_id === p.id);
     const last = rs[rs.length - 1];
     h = `<h2>Aggiungi rata · ${esc(p.nome)}</h2><form onsubmit="event.preventDefault();UI.aggiungiRata(this,'${p.id}')"><div class="row"><div class="field"><label>Numero</label><input name="n" type="number" value="${(last ? last.n : 0) + 1}" required></div><div class="field"><label>Scadenza</label><input name="scadenza" type="date" value="${last ? addMonths(last.scadenza, p.cadenza_mesi || 1) : OGGI}" required></div><div class="field"><label>Importo</label><input name="importo" inputmode="decimal" value="${p.rata || ''}" required></div></div><div class="row"><button class="btn primary">Aggiungi</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+  } else if (M.type === 'f24') {
+    h = `<h2>Aggiungi un F24 da versare</h2><p class="small muted" style="margin-top:0">Un versamento per ogni modello F24 ricevuto dal commercialista. Entra nello scadenziario e nei «prossimi 30 giorni» di Oggi; si segna pagato come le altre rate. In alternativa si può mandare il PDF a Claude, che lo legge e lo inserisce.</p>
+    <form onsubmit="event.preventDefault();UI.aggiungiF24(this)"><div class="row"><div class="field"><label>Scadenza del versamento</label><input name="scadenza" type="date" required></div><div class="field"><label>Importo da versare (€)</label><input name="importo" inputmode="decimal" required></div></div>
+    <div class="field"><label>Che cosa si paga</label><input name="nota" placeholder="es. IVA ottobre 2026 + ritenute + INPS" required></div>
+    <div class="row"><button class="btn primary">Aggiungi</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
   } else if (M.type === 'piano') {
     h = `<h2>Nuovo piano di pagamento</h2><form onsubmit="event.preventDefault();UI.nuovoPiano(this)">
     <div class="row"><div class="field"><label>Tipo</label><select name="tipo">${Object.entries(tipoPiano).map(([k, l]) => `<option value="${k}" ${M.id === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div><div class="field" style="flex:2"><label>Nome</label><input name="nome" required placeholder="es. Mutuo Credem auto / AR123456789"></div></div>
@@ -933,6 +947,15 @@ const UI = {
       const { error } = await S.sb.from('rate').insert({ id: pid + '-' + n, piano_id: pid, n, scadenza: form.scadenza.value, importo, stato: 'futura' }); if (error) throw error;
       S.modal = null; await reloadRate(); S._keepScroll = true; render();
     }, 'Rata aggiunta');
+  },
+  async aggiungiF24(form) {
+    await guard(async () => {
+      const importo = num(form.importo.value), nota = form.nota.value.trim(); if (!importo || importo <= 0) throw new Error('importo non valido'); if (!form.scadenza.value) throw new Error('manca la scadenza');
+      if (!S.data.piani.some(p => p.id === 'f24')) { const r = await S.sb.from('piani').insert({ id: 'f24', tipo: 'f24', nome: 'F24 da versare', controparte: 'Agenzia delle Entrate (F24 del commercialista)', descrizione: 'Un versamento per ogni modello F24 ricevuto dal commercialista', stato: 'attivo', creato_da: chi() }); if (r.error) throw r.error; }
+      const n = Math.max(0, ...S.data.rate.filter(r => r.piano_id === 'f24').map(r => r.n)) + 1;
+      const { error } = await S.sb.from('rate').insert({ id: 'f24-' + n, piano_id: 'f24', n, scadenza: form.scadenza.value, importo, stato: 'futura', nota }); if (error) throw error;
+      S.modal = null; await reloadRate(); S.filtroRate = 'piani'; S._open = 'f24'; render();
+    }, 'F24 aggiunto allo scadenziario');
   },
   async statoPiano(id, stato) {
     await guard(async () => { const { error } = await S.sb.from('piani').update({ stato, aggiornato_il: new Date().toISOString() }).eq('id', id); if (error) throw error; await reloadRate(); S._keepScroll = true; render(); }, 'Stato del piano aggiornato');
