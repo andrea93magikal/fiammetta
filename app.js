@@ -10,7 +10,7 @@ if (!window.supabase) { document.getElementById('app').innerHTML = '<div class="
 const C = window.FIAMMETTA_CONFIG;
 const S = { sb: null, email: '', me: null, view: 'oggi', data: null, loadedAt: 0, modal: null, setPwd: false,
   filtroRate: 'piani', annoCE: null, mappa: null, cercaConto: '', soloMov: true, busy: false,
-  partite: { tab: 'incassi', filtro: 'tutto', cerca: '', tuttePf: false }, clienti: null, dett: null };
+  partite: { tab: 'incassi', filtro: 'tutto', cerca: '', pfFiltro: 'aperte' }, clienti: null, dett: null };
 const VISTE = [['oggi', 'Oggi'], ['partite', 'Crediti e debiti'], ['scadenziario', 'Scadenziario'], ['banche', 'Banche e PFN'], ['ce', 'Conto economico'], ['stato', 'Stato dati'], ['impostazioni', 'Impostazioni']];
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -43,7 +43,7 @@ async function all(table, build) {
   return out;
 }
 async function loadAll() {
-  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti] = await Promise.all([
+  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti, cOrdini, cBolle, cFatture, cIncassi] = await Promise.all([
     S.sb.rpc('stato_dati').then(r => { if (r.error) throw r.error; return r.data; }),
     all('v_ce_mese'), all('v_sp_saldi'), all('v_banche_saldi'),
     all('v_rate', q => q.order('scadenza').order('n')), all('piani', q => q.order('tipo').order('nome')),
@@ -54,11 +54,14 @@ async function loadAll() {
     all('regole_incasso'), all('v_proforme', q => q.order('datdoc', { ascending: false })),
     all('v_banca_stima'), all('v_banca_nuovi', q => q.order('dataoperaz', { ascending: false })),
     all('erp_banche', q => q.order('codice')), all('fidi_banca'), all('v_cc_utilizzo'), all('v_oneri_banca'),
-    all('conti_uniti').catch(() => [])
+    all('conti_uniti').catch(() => []),
+    all('v_catena_ordini').catch(() => []), all('v_catena_bolle').catch(() => []), all('v_catena_fatture').catch(() => []), all('v_incassi_banca').catch(() => [])
   ]);
   const P = {}; par.forEach(p => P[p.chiave] = typeof p.valore === 'number' ? p.valore : num(p.valore));
   const R = {}; regole.forEach(r => R[r.conto] = r);
-  S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team, movimenti, regole, R, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti };
+  S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team, movimenti, regole, R, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti,
+    catena: { ordini: cOrdini, bolle: cBolle, fatture: cFatture, incassi: cIncassi } };
+  collegaCatena();
   await riconcilia();
   arricchisci();
   S.loadedAt = Date.now();
@@ -75,11 +78,14 @@ async function riconcilia() {
     if (m.chiave_doc) {
       const pf = D.proforme.find(p => p.chiave === m.chiave_doc);
       if (!pf) continue;
-      // la fattura vera e' uscita: cerco la partita aperta dello stesso cliente con lo stesso importo
-      const cand = D.scad.filter(s => s.conto === pf.conto && s.tipo_cf === 'C' && Math.abs(Number(s.importo) - Number(pf.totdoc)) < 0.01 && s.datdoc >= pf.datdoc)
-        .filter(s => !D.movimenti.some(x => x.chiave_partita === s.chiave))[0];
-      if (cand) { m.chiave_partita = cand.chiave; collega.push(m); }
-      else if (pf.fatturata_il && giorni(pf.fatturata_il, OGGI) > 45) chiudi.push(m.id); // fatturata da tempo e nessuna partita aperta: NTS ha gia' registrato l'incasso
+      if (pf.fatture && pf.fatture.length) {
+        // la fattura vera e' uscita (collegata dalla catena ordine → bolla → fattura): la sua partita aperta prende l'incasso segnato;
+        // se la fattura non ha piu' partite aperte NTS ha gia' registrato l'incasso
+        const part = pf.fatture.flatMap(partiteDellaFattura);
+        const cand = part.find(s => !D.movimenti.some(x => x.chiave_partita === s.chiave));
+        if (cand) { m.chiave_partita = cand.chiave; collega.push(m); }
+        else if (!part.length) chiudi.push(m.id);
+      }
     }
   }
   try {
@@ -87,8 +93,118 @@ async function riconcilia() {
     if (chiudi.length) { await S.sb.from('movimenti_app').update({ stato: 'riconciliato', riconciliato_il: new Date().toISOString() }).in('id', chiudi); D.movimenti = D.movimenti.filter(m => !chiudi.includes(m.id)); }
   } catch (e) { console.error('riconciliazione', e); }
 }
+// ---------- Catena proforma → ordine → bolla → fattura → incasso ----------
+// In NTS la proforma non genera nulla: è solo il documento che si manda al cliente per farsi pagare. Il percorso vero è
+// ordine cliente (impegno) → bolla (nata dall'ordine) → fattura (anche differita) → incasso. NTS conosce i collegamenti
+// ordine → bolla e bolla → fattura (viste v_catena_*); manca proforma → ordine, che si ricostruisce per importo e data.
+// Ogni ordine, bolla e fattura serve a una sola proforma e si parte dagli importi più vicini: a 1 centesimo di distanza
+// stanno due proforme diverse dello stesso cliente (Grimaldi n. 78 e n. 85), che un confronto «circa uguale» confondeva.
+const TOL_ESATTA = () => 0.05, TOL_PICCOLA = t => Math.max(1, t * 0.01), TOL_LARGA = t => Math.max(10, t * 0.06);
+function abbina(L, R, cand, tols) {
+  const out = new Map(), usati = new Set();
+  tols.forEach(tol => {
+    const coppie = [];
+    L.forEach(l => { if (out.has(l)) return; R.forEach(r => { if (usati.has(r)) return; const x = cand(l, r); if (!x) return; const diff = Math.round(Math.abs(x.a - x.b) * 100) / 100; if (diff <= tol(x.a)) coppie.push({ l, r, diff, dd: x.dd }); }); });
+    coppie.sort((u, v) => u.diff - v.diff || u.dd - v.dd);
+    coppie.forEach(q => { if (!out.has(q.l) && !usati.has(q.r)) { out.set(q.l, q.r); usati.add(q.r); } });
+  });
+  return out;
+}
+const partiteDellaFattura = f => S.data.scad.filter(s => s.tipo_cf === 'C' && s.conto === f.conto && s.numdoc === f.numdoc && (s.alfdoc || '') === (f.serie || '') && String(s.datdoc || '').slice(0, 4) === String(f.anno));
+function collegaCatena() {
+  const D = S.data, K = D.catena || {}, n_ = x => Number(x) || 0, PF = D.proforme;
+  const ordini = (K.ordini || []).map(o => ({ ...o, totdoc: n_(o.totdoc), bolle: [], proforma: null }));
+  const bolle = (K.bolle || []).map(b => ({ ...b, totdoc: n_(b.totdoc), ordiniObj: [], fatturaObj: null, direttaA: null }));
+  const fatture = (K.fatture || []).map(f => ({ ...f, totdoc: n_(f.totdoc), aperto: n_(f.aperto) }));
+  const ordK = new Map(ordini.map(o => [o.chiave, o])), fatK = new Map(fatture.map(f => [f.chiave, f]));
+  // collegamenti esatti di NTS: righe della bolla → ordine, bolla → fattura
+  bolle.forEach(b => { (b.ordini || []).forEach(k => { const o = ordK.get(k); if (o) { o.bolle.push(b); b.ordiniObj.push(o); } }); if (b.fattura) b.fatturaObj = fatK.get(b.fattura) || null; });
+  PF.forEach(p => { p.totdoc = Number(p.totdoc); p.ordine = null; p.bolle = []; p.fatture = []; p.doppia = null; p.via = {}; });
+  // 1. proforma → ordine: stesso cliente, ordine entro 300 giorni prima (o 15 dopo), importi più vicini per primi
+  abbina(PF, ordini, (p, o) => p.conto === o.conto && o.datord <= addDays(p.datdoc, 15) && o.datord >= addDays(p.datdoc, -300) ? { a: p.totdoc, b: o.totdoc, dd: Math.abs(giorni(o.datord, p.datdoc)) } : null, [TOL_ESATTA, TOL_PICCOLA, TOL_LARGA])
+    .forEach((o, p) => { p.ordine = o; o.proforma = p; });
+  // 2. ordine → bolla: dove NTS non ha il collegamento (la maggior parte delle bolle) per importo; proforma senza ordine → bolla per importo
+  abbina(ordini.filter(o => o.proforma && o.flevas === 'S' && !o.bolle.length), bolle.filter(b => !b.ordiniObj.length),
+    (o, b) => o.conto === b.conto && b.datdoc >= addDays(o.datord, -3) && b.datdoc <= addDays(o.datord, 330) ? { a: o.totdoc, b: b.totdoc, dd: Math.abs(giorni(o.datord, b.datdoc)) } : null, [TOL_ESATTA, TOL_PICCOLA])
+    .forEach((b, o) => { o.bolle.push(b); b.ordiniObj.push(o); });
+  PF.forEach(p => { if (p.ordine) p.bolle = p.ordine.bolle; });
+  abbina(PF.filter(p => !p.ordine), bolle.filter(b => b.ordiniObj.every(o => !o.proforma)),
+    (p, b) => p.conto === b.conto && b.datdoc >= addDays(p.datdoc, -3) && b.datdoc <= addDays(p.datdoc, 240) ? { a: p.totdoc, b: b.totdoc, dd: Math.abs(giorni(p.datdoc, b.datdoc)) } : null, [TOL_ESATTA, TOL_PICCOLA, TOL_LARGA])
+    .forEach((b, p) => { b.direttaA = p; p.bolle = [b]; p.ordine = b.ordiniObj[0] || null; p.via.bolla = true; });
+  // proforma rimasta senza collegamenti ma con un candidato già preso da un'altra proforma: è una doppia (proforma rifatta)
+  PF.filter(p => !p.ordine && !p.bolle.length).forEach(p => {
+    const o = ordini.find(o => o.proforma && o.proforma !== p && o.conto === p.conto && o.datord <= addDays(p.datdoc, 15) && o.datord >= addDays(p.datdoc, -300) && Math.abs(o.totdoc - p.totdoc) <= TOL_LARGA(p.totdoc));
+    const b = bolle.find(b => b.direttaA && b.direttaA !== p && b.conto === p.conto && b.datdoc >= addDays(p.datdoc, -3) && b.datdoc <= addDays(p.datdoc, 240) && Math.abs(b.totdoc - p.totdoc) <= TOL_LARGA(p.totdoc));
+    p.doppia = o ? o.proforma : b ? b.direttaA : null;
+  });
+  // 3. bolla → fattura: il collegamento esatto c'è solo per le bolle da maggio 2026; prima, per importo
+  const catB = [...new Set(PF.flatMap(p => p.bolle))], usateF = new Set(bolle.map(b => b.fatturaObj).filter(Boolean));
+  abbina(catB.filter(b => b.flfatt === 'S' && !b.fatturaObj), fatture.filter(f => !usateF.has(f)),
+    (b, f) => b.conto === f.conto && f.datdoc >= b.datdoc && f.datdoc <= addDays(b.datdoc, 150) ? { a: b.totdoc, b: f.totdoc, dd: Math.abs(giorni(b.datdoc, f.datdoc)) } : null, [TOL_ESATTA, TOL_PICCOLA, TOL_LARGA])
+    .forEach((f, b) => { b.fatturaObj = f; });
+  PF.forEach(p => { p.fatture = [...new Set(p.bolle.map(b => b.fatturaObj).filter(Boolean))]; });
+  const usateF2 = new Set([...usateF, ...PF.flatMap(p => p.fatture)]);
+  abbina(PF.filter(p => p.ordine && p.ordine.flevas === 'S' && !p.bolle.length), fatture.filter(f => !usateF2.has(f)),
+    (p, f) => p.conto === f.conto && f.datdoc >= addDays(p.datdoc, -3) && f.datdoc <= addDays(p.datdoc, 240) ? { a: p.totdoc, b: f.totdoc, dd: Math.abs(giorni(p.datdoc, f.datdoc)) } : null, [TOL_ESATTA, TOL_PICCOLA, TOL_LARGA])
+    .forEach((f, p) => { p.fatture = [f]; });
+  // tappa raggiunta dalla proforma
+  PF.forEach(p => {
+    p.spedita_il = p.bolle.length ? p.bolle.map(b => b.datdoc).sort()[0] : null;
+    p.fatturata_il = p.fatture.length ? p.fatture.map(f => f.datdoc).sort()[0] : null;
+    p.tappa = p.fatture.length ? (sum(p.fatture, f => f.aperto) > 0.005 ? 'fatturata' : 'chiusa')
+      : p.bolle.length ? (p.bolle.some(b => b.flfatt === 'S') ? 'fatturata' : 'spedita')
+      : p.doppia ? 'doppia' : p.ordine ? (p.ordine.flevas === 'S' ? 'evasa_nd' : 'da_spedire') : 'senza_ordine';
+  });
+  // abitudine di pagamento per cliente: dall'incasso delle fatture chiuse rispetto alla data della bolla
+  const ab = {};
+  bolle.forEach(b => { const f = b.fatturaObj; if (!f || f.aperto > 0.005 || !f.incassata_il) return; const x = ab[b.conto] || (ab[b.conto] = { n: 0, dopo: 0, ritardi: [] }); const d = giorni(b.datdoc, f.incassata_il); x.n++; if (d > 2) { x.dopo++; x.ritardi.push(d); } });
+  Object.values(ab).forEach(x => { x.ritardi.sort((u, v) => u - v); x.mediana = x.ritardi.length ? x.ritardi[Math.floor(x.ritardi.length / 2)] : 0; x.dopoSolito = x.dopo * 2 >= x.n; });
+  D.abitudini = ab;
+}
+// Incassi delle proforme ancora da incassare: accrediti in banca che NTS non ha ancora registrato (uno a uno, per importo e nome)
+// e incassi registrati in NTS ma non abbinati a una fattura. Un accredito già registrato ha chiuso una fattura: non paga una proforma aperta.
+function pagamentiProforme() {
+  const D = S.data, nuovi = D.nuovi || [];
+  const riconosciuti = new Set(nuovi.filter(m => m.abb).map(m => m.codice_banca + '|' + m.progr));
+  const txt = m => ' ' + norm((m.descr1 || '') + ' ' + (m.descr2 || '')) + ' ';
+  const pool = [
+    ...((D.catena && D.catena.incassi) || []).filter(m => !m.registrato && !riconosciuti.has(m.codice_banca + '|' + m.progr) && !/antic|finanz|mutuo|prestito/i.test((m.descr1 || '') + ' ' + (m.descr2 || '')))
+      .map(m => ({ m, importo: Number(m.importo), data: m.dataoperaz, testo: txt(m) })),
+    ...D.scad.filter(s => s.daAbbinare && s.tipo_cf === 'C' && s.importo < 0 && !s.copertura).map(s => ({ s, conto: s.conto, importo: -s.importo, data: String(s.datdoc || s.datsca).slice(0, 10) }))
+  ];
+  const daPag = D.proforme.filter(p => !p.copertura && ['da_spedire', 'spedita', 'senza_ordine', 'evasa_nd'].includes(p.tappa));
+  abbina(daPag, pool, (p, x) => {
+    if (x.data < addDays(p.datdoc, -2) || x.data > OGGI) return null;
+    if (x.conto) { if (x.conto !== p.conto) return null; } else if (!nomeIn(p.controparte, x.testo) && Math.abs(p.totdoc - x.importo) > 0.05) return null;
+    return { a: p.totdoc, b: x.importo, dd: Math.abs(giorni(p.datdoc, x.data)) };
+  }, [TOL_ESATTA, t => Math.max(2, t * 0.006)]).forEach((x, p) => {
+    p.pagata = x.data; p.pagata_da = x.m ? 'banca' : 'nts';
+    if (x.m) { p.banca_pag = x.m; const n = nuovi.find(y => y.codice_banca === x.m.codice_banca && y.progr === x.m.progr); if (n) n.abb = { tipo: 'proforma', nome: p.controparte, rif: 'proforma ' + p.numdoc }; }
+  });
+}
+// Stato della proforma per l'elenco e per i totali
+//  attesa = ordine non ancora spedito e nessun pagamento · da_fatturare = spedita, non ancora fatturata e non pagata (entrambe contano come da incassare)
+//  pagata = pagamento visto, merce da spedire o da fatturare · fatturata = il credito è già nelle fatture · chiusa = fattura incassata
+//  doppia = proforma rifatta · verifica = nessun collegamento sicuro
+function statoProforme() {
+  const D = S.data;
+  D.proforme.forEach(p => {
+    const t = p.tappa, ab = D.abitudini[p.conto];
+    p.abitudine = ab ? (ab.dopoSolito ? 'dopo' : 'prima') : null; p.abitudineDati = ab || null;
+    p.stato = p.copertura ? ((p.copertura.stato === 'annullato' || Number(p.copertura.importo) === 0) ? 'annullata' : 'incassata')
+      : t === 'chiusa' ? 'chiusa' : t === 'fatturata' ? 'fatturata' : t === 'doppia' ? 'doppia' : p.pagata ? 'pagata'
+      : t === 'da_spedire' ? 'attesa' : t === 'spedita' ? 'da_fatturare'
+      : t === 'senza_ordine' ? (giorni(p.datdoc, OGGI) > 120 ? 'verifica' : 'attesa') : 'verifica';
+    // quando si incassa: chi paga di solito dopo la consegna, dopo la consegna prevista (più i giorni di ritardo abituali); gli altri subito
+    p.atteso = OGGI;
+    if (p.abitudine === 'dopo' && (p.stato === 'attesa' || p.stato === 'da_fatturare')) {
+      const base = p.stato === 'da_fatturare' ? p.spedita_il : (p.ordine && p.ordine.datcons) || OGGI;
+      p.atteso = addDays(base > OGGI ? base : OGGI, ab.mediana);
+    }
+  });
+}
 // Calcoli derivati su partite e proforme (coperture, date attese, piani di rientro, movimenti bancari riconosciuti)
-const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const norm = s =>(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const PAROLE_VUOTE = ['srl', 'spa', 'snc', 'sas', 'unipersonale', 'societa', 'socio', 'unico', 'store', 'group', 'italia'];
 const nomeIn = (nome, testo) => norm(nome).split(' ').filter(w => w.length > 3 && !PAROLE_VUOTE.includes(w)).slice(0, 2).some(w => testo.includes(' ' + w + ' '));
 const docRif = s => s.daAbbinare ? 'da abbinare' : s.apertura ? 'saldo 2025' : (s.numdoc ? 'ft ' + s.numdoc : '');
@@ -107,7 +223,7 @@ function arricchisci() {
     s.ritardo = giorni(s.attesa, OGGI);
     s.piano = s.tipo_cf === 'F' ? inPiano(s.controparte) : null;
   });
-  D.proforme.forEach(p => { p.totdoc = Number(p.totdoc); p.copertura = copertaDoc[p.chiave] || null; p.banca_pag = null; });
+  D.proforme.forEach(p => { p.totdoc = Number(p.totdoc); p.copertura = copertaDoc[p.chiave] || null; p.banca_pag = null; p.pagata = null; p.pagata_da = null; });
   // Movimenti bancari importati in NTS dopo l'ultima registrazione: li riconosco per importo (e nome, se c'è nella descrizione).
   // Una partita riconosciuta esce da scaduti e scadenze: il movimento è già nella liquidità stimata.
   const usate = new Set(), nuovi = D.nuovi || [];
@@ -123,21 +239,16 @@ function arricchisci() {
     const testo = ' ' + norm((m.descr1 || '') + ' ' + (m.descr2 || '')) + ' ';
     const cand = cli.filter(s => !usate.has(s.chiave) && Math.abs(s.importo - m.accredito) < 0.01 && giorni(s.datsca, m.dataoperaz) <= 240 && giorni(s.datsca, m.dataoperaz) >= -90);
     const c = cand.find(s => nomeIn(s.controparte, testo)) || cand[0];
-    if (c) { usate.add(c.chiave); c.banca_pag = m; m.abb = { tipo: 'cliente', nome: c.controparte, rif: docRif(c) }; return; }
-    const pf = D.proforme.find(p => !usate.has(p.chiave) && !p.copertura && !p.fatturata_il && !p.spedita_il && Math.abs(p.totdoc - m.accredito) < 0.01 && p.datdoc <= m.dataoperaz);
-    if (pf) { usate.add(pf.chiave); pf.banca_pag = m; m.abb = { tipo: 'proforma', nome: pf.controparte, rif: 'proforma ' + pf.numdoc }; }
+    if (c) { usate.add(c.chiave); c.banca_pag = m; m.abb = { tipo: 'cliente', nome: c.controparte, rif: docRif(c) }; }
   });
-  D.proforme.forEach(p => {
-    p.pagata = p.banca_pag ? p.banca_pag.dataoperaz : p.pagata_il;
-    p.stato = p.copertura ? ((p.copertura.stato === 'annullato' || Number(p.copertura.importo) === 0) ? 'annullata' : 'incassata')
-      : p.spedita_il ? 'spedita' : p.fatturata_il ? 'fatturata' : p.pagata ? 'pagata' : giorni(p.datdoc, OGGI) > 120 ? 'vecchia' : 'attesa';
-  });
+  pagamentiProforme();
+  statoProforme();
 }
 const partiteC = () => S.data.scad.filter(s => s.tipo_cf === 'C' && !s.copertura && !s.banca_pag);
 const partiteF = () => S.data.scad.filter(s => s.tipo_cf === 'F' && !s.copertura && !s.banca_pag);
 // fornitori: importi lordi, solo le partite in avere (decisione del 06/11: i saldi in dare non si analizzano)
 const debitiF = () => partiteF().filter(s => s.importo < 0);
-const proformeAttese = () => S.data.proforme.filter(p => p.stato === 'attesa');
+const proformeAttese = () => S.data.proforme.filter(p => p.stato === 'attesa' || p.stato === 'da_fatturare');
 
 // ---------- Calcoli ----------
 // Posizione contabile e stimata. La stima si fa CONTO PER CONTO: saldo contabile + movimenti bancari importati in NTS
@@ -288,7 +399,7 @@ function pageOggi() {
   const rate30 = rateAperte().filter(r => r.scadenza >= OGGI && r.scadenza <= fine);
   const forn30 = df.filter(x => x.datsca >= OGGI && x.datsca <= fine && !x.piano);
   const cli30 = pc.filter(x => x.attesa >= OGGI && x.attesa <= fine);
-  const prof = proformeAttese();
+  const prof = proformeAttese().filter(p => p.atteso <= fine), profTutte = proformeAttese();
   const usciteRate = sum(rate30, r => r.importo), usciteForn = -sum(forn30, x => x.importo), incassi = sum(cli30, x => x.importo), incProf = sum(prof, p => p.totdoc);
   const daConf = D.rate.filter(r => r.stato_effettivo === 'da_confermare' && r.stato_piano === 'attivo');
   const ader = D.piani.filter(p => p.tipo === 'ader' && p.stato === 'attivo').map(p => ({ p, s: statoAder(p) }));
@@ -324,7 +435,7 @@ function pageOggi() {
       ${inBanca.length ? `<div class="sub">${link(inBanca.length + ' pagamenti e incassi', 'partite', 'banca')} già passati in banca, da registrare in NTS: non contati</div>` : ''}</div>
   </div>
   <div class="card"><h3>Prossimi 30 giorni (fino al ${fmtD(fine)})</h3>
-    <div class="row4" style="margin-bottom:12px">${kpiBox('Uscite', '− ' + eur(usciteRate + usciteForn), `rate e piani ${eur(usciteRate)} · ${link('fornitori in scadenza', 'partite', 'pagamenti:prossime')} ${eur(usciteForn)}`, 'bad')}${kpiBox('Incassi attesi', '+ ' + eur(incassi), `${link('fatture ai clienti', 'partite', 'incassi:prossime')} (${cli30.length})`, 'good')}${kpiBox('Proforme da incassare', '+ ' + eur(incProf), `${link(prof.length + ' proforme', 'partite', 'incassi:proforme')}, merce non ancora spedita`, 'good')}${kpiBox('Saldo netto dei conti a fine periodo', eur(nettoFine), `liquidità − scoperti di c/c (oggi ${eur(netto)}), senza proforme, stipendi, F24 e spese correnti`, nettoFine < 0 ? 'warn' : '')}</div>
+    <div class="row4" style="margin-bottom:12px">${kpiBox('Uscite', '− ' + eur(usciteRate + usciteForn), `rate e piani ${eur(usciteRate)} · ${link('fornitori in scadenza', 'partite', 'pagamenti:prossime')} ${eur(usciteForn)}`, 'bad')}${kpiBox('Incassi attesi', '+ ' + eur(incassi), `${link('fatture ai clienti', 'partite', 'incassi:prossime')} (${cli30.length})`, 'good')}${kpiBox('Proforme da incassare', '+ ' + eur(incProf), `${link(prof.length + ' proforme', 'partite', 'incassi:proforme')}, ordini non ancora fatturati${profTutte.length > prof.length ? ` · altre ${profTutte.length - prof.length} dopo i 30 giorni (clienti che pagano dopo la consegna)` : ''}`, 'good')}${kpiBox('Saldo netto dei conti a fine periodo', eur(nettoFine), `liquidità − scoperti di c/c (oggi ${eur(netto)}), senza proforme, stipendi, F24 e spese correnti`, nettoFine < 0 ? 'warn' : '')}</div>
     ${elenco ? `<div class="evl">${elenco}</div><div class="small muted" style="margin-top:6px">Le date con più movimenti si aprono con un clic.</div>` : '<div class="muted">Nessuna scadenza nei prossimi 30 giorni.</div>'}</div>
   <div class="card"><h3>Rateizzazioni AdER</h3>${ader.length ? `<ul class="list">${ader.map(({ p, s }) => `<li><div><b>${esc(p.nome)}</b><div class="d">${s.pagate}/${s.tot} pagate · contatore <b>${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="warn">${s.daConf} scadute da confermare</span>` : ''}) · residuo ${eur(s.residuo)} · prossima ${s.prossima ? fmtD(s.prossima.scadenza) + ' ' + eur2(s.prossima.importo) : '–'}</div><div class="bar"><i class="${s.margine <= 1 ? 'bad' : s.margine <= 3 ? 'warn' : 'good'}" style="width:${Math.min(100, 100 * s.contatore / s.soglia)}%"></i></div></div><div class="right">${s.margine <= 1 ? '<span class="pill bad">decadenza vicina</span>' : s.margine <= 3 ? '<span class="pill warn">attenzione</span>' : '<span class="pill good">regolare</span>'}</div></li>`).join('')}</ul>` : '<div class="muted">Nessun piano AdER attivo.</div>'}<div class="small muted" style="margin-top:8px">Contatore = rate saltate + rate scadute non ancora confermate, come nel cruscotto storico: una rata scaduta conta finché non viene segnata pagata. Residuo = tutte le rate non pagate, saltate comprese.</div></div>
   </div>`;
@@ -338,13 +449,41 @@ function gruppiPartite(rows, cli) {
   const segno = v => cli ? v : -v;
   return lista.length ? lista.map(g => `<details class="piano" ${lista.length <= 6 || q ? 'open' : ''}><summary><span class="nm">${esc(g.nome)}<div class="small muted">conto ${g.conto}${D.R[g.conto] ? ' · regola: ' + (D.R[g.conto].base === 'scadenza' ? 'scadenza' : 'fattura') + ' + ' + D.R[g.conto].giorni + ' gg' : ''}</div></span><span class="small nowrap">${g.rows.length} partite</span><span class="nowrap right"><b>${eur2(segno(g.tot))}</b></span></summary><div class="body">${tabellaPartite(g.rows, cli)}</div></details>`).join('') : '<div class="card muted">Nessuna partita.</div>';
 }
+// Proforme: ogni riga mostra la catena ordine → bolla → fattura e a che punto è la proforma
+const GRUPPI_PF = [['attesa', 'Da incassare · merce da spedire'], ['da_fatturare', 'Spedite, non ancora fatturate'], ['fatturata', 'Già fatturate · il credito è già nelle fatture da incassare'],
+  ['pagata', 'Pagate · merce da spedire o da fatturare'], ['verifica', 'Da verificare · nessun collegamento sicuro'], ['doppia', 'Doppie · proforma rifatta'], ['chiusa', 'Chiuse · fattura incassata'], ['incassata', 'Segnate incassate a mano'], ['annullata', 'Non valide']];
+function catenaProforma(p) {
+  const r = [], o = p.ordine;
+  if (o) r.push(`ordine n. ${o.numord} del ${fmtD(o.datord)}${o.flevas === 'S' ? '' : ' · consegna prevista ' + fmtD(o.datcons)}${Math.abs(o.totdoc - p.totdoc) > 0.5 ? ' · ' + eur2(o.totdoc) : ''}`);
+  p.bolle.slice(0, 3).forEach(b => r.push(`bolla n. ${b.numdoc} del ${fmtD(b.datdoc)}`));
+  p.fatture.forEach(f => r.push(`fattura n. ${f.numdoc} del ${fmtD(f.datdoc)} · ${f.aperto > 0.005 ? '<b>da incassare ' + eur2(f.aperto) + '</b>' + (f.scadenza ? ' entro ' + fmtD(f.scadenza) : '') : 'incassata' + (f.incassata_il ? ' ' + fmtD(f.incassata_il) : '')}`));
+  if (!r.length) r.push('<span class="muted">nessun ordine né bolla collegati</span>');
+  return r.map(x => `<span class="d2">${x}</span>`).join('');
+}
+function statoProforma(p) {
+  const abit = () => { if (!p.abitudine) return ''; const a = p.abitudineDati;
+    return `<span class="d2">${p.abitudine === 'dopo' ? `di solito paga dopo la consegna (storico: ${a.dopo} su ${a.n}${a.mediana ? ', circa ' + a.mediana + ' giorni dopo' : ''}): incasso atteso verso il ${fmtD(p.atteso)}` : `di solito paga prima della consegna (storico: ${a.n - a.dopo} su ${a.n})`}</span>`; };
+  const s = p.stato;
+  if (s === 'attesa') return `<span class="pill warn">da incassare</span><span class="d2">${p.tappa === 'da_spedire' ? 'merce da spedire' : 'nessun ordine collegato'}</span>${abit()}`;
+  if (s === 'da_fatturare') return `<span class="pill warn">spedita, da fatturare</span><span class="d2">incasso atteso dopo la fattura</span>${abit()}`;
+  if (s === 'pagata') return `<span class="pill good">pagata ${fmtD(p.pagata)}</span><span class="d2">${p.pagata_da === 'banca' ? 'bonifico visto in banca' : 'incasso registrato in NTS'}, ${p.bolle.length ? 'merce spedita, da fatturare' : 'merce da spedire'}</span>`;
+  if (s === 'fatturata') {
+    const part = p.fatture.flatMap(partiteDellaFattura), visto = part.length && part.every(x => x.copertura || x.banca_pag);
+    return `<span class="pill plain">fatturata ${fmtD(p.fatturata_il)}</span><span class="d2">${p.fatture.length ? (visto ? 'incasso già visto in banca o segnato in Fiammetta' : 'già tra le fatture da incassare: non si conta due volte') : 'fattura non collegata'}</span>`;
+  }
+  if (s === 'chiusa') return `<span class="pill good">chiusa</span><span class="d2">fattura incassata</span>`;
+  if (s === 'doppia') return `<span class="pill plain">doppia</span><span class="d2">stesso ordine o bolla della proforma n. ${p.doppia.numdoc}</span>`;
+  if (s === 'verifica') return `<span class="pill warn">da verificare</span><span class="d2">${p.tappa === 'evasa_nd' ? 'ordine evaso ma bolla e fattura non trovate' : 'nessun ordine, bolla o pagamento collegati da più di 120 giorni'}</span>`;
+  if (s === 'incassata') return `<span class="pill good">incassata ${fmtD(p.copertura.data)}</span>`;
+  return '<span class="pill plain">non valida</span>';
+}
 function tabellaProforme(rows) {
-  const pill = p => p.stato === 'attesa' ? '<span class="pill warn">da incassare</span>' : p.stato === 'vecchia' ? '<span class="pill warn">più di 120 giorni: da verificare</span>'
-    : p.stato === 'pagata' ? `<span class="pill good">pagata ${fmtD(p.pagata)}</span><span class="d2">${p.banca_pag ? 'bonifico visto in banca' : 'incasso registrato in NTS'}, merce da spedire</span>`
-    : p.stato === 'incassata' ? `<span class="pill good">incassata ${fmtD(p.copertura.data)}</span>` : p.stato === 'spedita' ? `<span class="pill plain">spedita ${fmtD(p.spedita_il)}</span>`
-    : p.stato === 'fatturata' ? `<span class="pill plain">fatturata ${fmtD(p.fatturata_il)}</span>` : '<span class="pill plain">annullata</span>';
   if (!rows.length) return '<div class="card muted">Nessuna proforma.</div>';
-  return `<div class="card"><div class="scroll"><table class="resp"><tr><th>Proforma</th><th>Cliente</th><th>Pagamento</th><th class="num">Importo</th><th>Stato</th><th></th></tr>${rows.map(p => `<tr><td class="nowrap">n. ${p.numdoc}<span class="d2">${fmtD(p.datdoc)}</span></td><td>${esc(p.controparte || p.conto)}${p.paese && p.paese !== 'IT' ? ' <span class="pill plain">' + esc(p.paese) + '</span>' : ''}</td><td class="small">${esc(p.pagamento || '')}</td><td class="num">${eur2(p.totdoc)}</td><td>${pill(p)}${p.copertura && p.copertura.nota ? '<span class="d2">' + esc(p.copertura.nota) + '</span>' : ''}</td><td class="right">${p.stato === 'attesa' || p.stato === 'vecchia' ? `<button class="btn sm primary" onclick="UI.modal('incasso','pf:${p.chiave}')">Incassata</button> <button class="btn sm ghost" onclick="UI.annullaProforma('${p.chiave}')">non valida</button>` : p.copertura ? `<button class="btn sm ghost" onclick="UI.annullaMovimento(${p.copertura.id})">annulla</button>` : ''}</td></tr>`).join('')}</table></div></div>`;
+  const presenti = GRUPPI_PF.filter(([k]) => rows.some(p => p.stato === k)), conIntest = presenti.length > 1;
+  const riga = p => `<tr><td class="nowrap">n. ${p.numdoc}<span class="d2">${fmtD(p.datdoc)}</span></td><td>${esc(p.controparte || p.conto)}${p.paese && p.paese !== 'IT' ? ' <span class="pill plain">' + esc(p.paese) + '</span>' : ''}${p.pagamento ? `<span class="d2">${esc(p.pagamento)}</span>` : ''}</td><td class="small">${catenaProforma(p)}</td><td class="num">${eur2(p.totdoc)}</td><td>${statoProforma(p)}${p.copertura && p.copertura.nota ? '<span class="d2">' + esc(p.copertura.nota) + '</span>' : ''}</td><td class="right">${['attesa', 'da_fatturare', 'verifica'].includes(p.stato) ? `<button class="btn sm primary" onclick="UI.modal('incasso','pf:${p.chiave}')">Incassata</button> <button class="btn sm ghost" onclick="UI.annullaProforma('${p.chiave}')">non valida</button>` : p.copertura ? `<button class="btn sm ghost" onclick="UI.annullaMovimento(${p.copertura.id})">annulla</button>` : ''}</td></tr>`;
+  const corpo = presenti.map(([k, titolo]) => { const g = rows.filter(p => p.stato === k);
+    return (conIntest ? `<tr class="grp"><td colspan="6">${titolo} · ${g.length} · ${eur(sum(g, p => p.totdoc))}</td></tr>` : '') + g.map(riga).join(''); }).join('');
+  return `<div class="card"><div class="scroll"><table class="resp"><tr><th>Proforma</th><th>Cliente</th><th>Ordine, bolla e fattura</th><th class="num">Importo</th><th>Stato</th><th></th></tr>${corpo}</table></div></div>`;
 }
 function pagePartite() {
   const D = S.data, T = S.partite, q = T.cerca.toLowerCase();
@@ -360,17 +499,20 @@ function pagePartite() {
     if (!filtri.some(f => f[0] === T.filtro)) T.filtro = 'tutto';
     const pc = partiteC();
     const scad = pc.filter(s => s.attesa < OGGI), pros = pc.filter(s => s.attesa >= OGGI && s.attesa <= fine), oltre = pc.filter(s => s.attesa > fine);
-    const prof = proformeAttese(), vecchie = D.proforme.filter(p => p.stato === 'vecchia'), pagate = D.proforme.filter(p => p.stato === 'pagata');
+    const prof = proformeAttese(), perStato = k => D.proforme.filter(p => p.stato === k), verifica = perStato('verifica'), pagate = perStato('pagata'), fatturate = perStato('fatturata'), doppie = perStato('doppia'), daSped = perStato('attesa'), daFatt = perStato('da_fatturare');
     const inBanca = D.scad.filter(s => s.tipo_cf === 'C' && s.banca_pag);
     const tot = sum(pc, s => s.importo) + sum(prof, p => p.totdoc), sal25 = sum(scad.filter(s => s.apertura), s => s.importo);
     let rows = T.filtro === 'scaduto' ? scad : T.filtro === 'prossime' ? pros : T.filtro === 'oltre' ? oltre : T.filtro === 'proforme' ? [] : pc;
     rows = cerca(rows);
-    const pfRows = cerca(T.tuttePf ? D.proforme : prof);
-    body = `<div class="card" style="margin-bottom:12px"><div class="row5">${kpiBox('Fatture oltre la data attesa', eur(sum(scad, s => s.importo)), `${scad.length} partite${sal25 ? ` · di cui saldi 2025 ${eur(sal25)}` : ''}`, 'warn')}${kpiBox('Fatture attese entro 30 giorni', eur(sum(pros, s => s.importo)), pros.length + ' partite')}${kpiBox('Fatture attese oltre 30 giorni', eur(sum(oltre, s => s.importo)), oltre.length + ' partite')}${kpiBox('Proforme da incassare', eur(sum(prof, p => p.totdoc)), prof.length + ' proforme, merce non spedita')}${kpiBox('Totale da incassare', eur(tot), 'fatture + proforme', 'good')}</div>
-      <div class="small muted" style="margin-top:8px">Non conteggiati: ${inBanca.length} incassi già arrivati in banca e da registrare in NTS (${eur(sum(inBanca, s => s.importo))}, ${link('vedi', 'partite', 'banca')}) · ${pagate.length} proforme pagate e da spedire (${eur(sum(pagate, p => p.totdoc))}) · ${vecchie.length} proforme con più di 120 giorni, da verificare (${eur(sum(vecchie, p => p.totdoc))})</div></div>
+    const PF_FILTRI = [['aperte', 'Aperte'], ['incassare', 'Da incassare'], ['pagata', 'Pagate, da spedire'], ['verifica', 'Da verificare'], ['chiuse', 'Chiuse e doppie'], ['tutte', 'Tutte']];
+    const pff = PF_FILTRI.some(f => f[0] === T.pfFiltro) ? T.pfFiltro : 'aperte';
+    const pfStati = { aperte: ['attesa', 'da_fatturare', 'fatturata', 'verifica'], incassare: ['attesa', 'da_fatturare'], pagata: ['pagata'], verifica: ['verifica'], chiuse: ['chiusa', 'doppia', 'incassata', 'annullata'], tutte: null }[pff];
+    const pfRows = cerca(D.proforme.filter(p => !pfStati || pfStati.includes(p.stato)));
+    body = `<div class="card" style="margin-bottom:12px"><div class="row5">${kpiBox('Fatture oltre la data attesa', eur(sum(scad, s => s.importo)), `${scad.length} partite${sal25 ? ` · di cui saldi 2025 ${eur(sal25)}` : ''}`, 'warn')}${kpiBox('Fatture attese entro 30 giorni', eur(sum(pros, s => s.importo)), pros.length + ' partite')}${kpiBox('Fatture attese oltre 30 giorni', eur(sum(oltre, s => s.importo)), oltre.length + ' partite')}${kpiBox('Proforme da incassare', eur(sum(prof, p => p.totdoc)), `${daSped.length} da spedire${daFatt.length ? ' · ' + daFatt.length + ' spedite, da fatturare' : ''}`)}${kpiBox('Totale da incassare', eur(tot), 'fatture + proforme', 'good')}</div>
+      <div class="small muted" style="margin-top:8px">Non conteggiati: ${inBanca.length} incassi già arrivati in banca e da registrare in NTS (${eur(sum(inBanca, s => s.importo))}, ${link('vedi', 'partite', 'banca')}) · ${fatturate.length} proforme già fatturate (${eur(sum(fatturate, p => p.totdoc))}, il credito è già nelle fatture) · ${pagate.length} pagate e da spedire (${eur(sum(pagate, p => p.totdoc))}) · ${verifica.length} da verificare (${eur(sum(verifica, p => p.totdoc))}) · ${doppie.length} doppie</div></div>
       ${filtriHtml(filtri)}${cercaHtml('cerca cliente o numero')}
       ${T.filtro !== 'proforme' ? `<h3 style="margin:14px 0 8px">Fatture · ${rows.length} partite · ${eur(sum(rows, s => s.importo))}</h3><div class="small muted" style="margin-bottom:8px">La «data attesa» è la scadenza NTS, oppure quella della regola del cliente (es. NordicFire: fattura + 10 giorni). Con «Incassato» la partita esce subito dagli importi da incassare.</div>${gruppiPartite(rows, true)}` : ''}
-      ${T.filtro === 'tutto' || T.filtro === 'proforme' ? `<h3 style="margin:18px 0 8px">Proforme ${T.tuttePf ? '· tutte, ultimi 8 mesi' : `da incassare · ${prof.length} · ${eur(sum(prof, p => p.totdoc))}`} <button class="btn sm ghost" onclick="UI.tuttePf()">${T.tuttePf ? 'solo da incassare' : 'mostra tutte'}</button></h3><div class="small muted" style="margin-bottom:8px">Si pagano prima della spedizione. Escono da sole quando Fiammetta trova la bolla, la fattura (anche con piccole differenze o due proforme in una fattura) oppure l'incasso, in NTS o tra i bonifici in banca.</div>${tabellaProforme(pfRows)}` : ''}`;
+      ${T.filtro === 'tutto' || T.filtro === 'proforme' ? `<h3 style="margin:18px 0 8px">Proforme · ${pfRows.length}</h3><div class="small muted" style="margin-bottom:8px">In Magikal la proforma non genera nulla in NTS: Fiammetta la collega all'ordine del cliente (stesso cliente, importo e data più vicini) e da lì alla bolla, alla fattura e all'incasso. Conta come «da incassare» finché la merce non è fatturata (da quel momento il credito è nelle fatture qui sopra) e finché non si vede il bonifico, in NTS o in banca.</div><div class="tabs">${PF_FILTRI.map(([k, l]) => `<button class="${pff === k ? 'on' : ''}" onclick="UI.pfFiltro('${k}')">${l}</button>`).join('')}</div>${tabellaProforme(pfRows)}` : ''}`;
   } else if (T.tab === 'pagamenti') {
     const filtri = [['tutto', 'Tutto'], ['scaduto', 'Scadute'], ['prossime', 'In scadenza entro 30 giorni'], ['oltre', 'Oltre 30 giorni'], ['piani', 'Piani di rientro']];
     if (!filtri.some(f => f[0] === T.filtro)) T.filtro = 'tutto';
@@ -614,7 +756,7 @@ function pageBanche() {
 function pageStato() {
   const D = S.data, pos = posizione(), nuovi = D.nuovi || [];
   const daConf = D.rate.filter(r => r.stato_effettivo === 'da_confermare' && r.stato_piano === 'attivo');
-  const vecchie = D.proforme.filter(p => p.stato === 'vecchia'), daAbb = D.scad.filter(s => s.daAbbinare);
+  const vecchie = D.proforme.filter(p => p.stato === 'verifica'), daAbb = D.scad.filter(s => s.daAbbinare);
   const bb = bancheCC(pos), senzaFido = bb.filter(x => x.fido == null), senzaTasso = bb.filter(x => x.tasso == null && (x.fido || x.scoperto > 0.5));
   const ctr = controlliBanca(pos);
   const voce = (ok, testo, n, dove) => `<li><span>${ok ? '<span class="pill good">ok</span>' : '<span class="pill warn">da fare</span>'} ${testo}</span><b>${n}${dove ? ' · ' + dove : ''}</b></li>`;
@@ -631,7 +773,7 @@ function pageStato() {
       ${voce(!daConf.length, 'Rate scadute senza esito', daConf.length, link('Scadenziario', 'scadenziario', 'conferma'))}
       ${voce(!nuovi.length, 'Movimenti in banca da registrare in NTS', nuovi.length + (nuovi.length ? ` (${nuovi.filter(m => m.abb).length} riconosciuti)` : ''), link('vedi', 'partite', 'banca'))}
       ${voce(!daAbb.length, 'Pagamenti e incassi da abbinare alle fatture in NTS', daAbb.length, link('vedi', 'partite', 'pagamenti:tutto'))}
-      ${voce(!vecchie.length, 'Proforme con più di 120 giorni da verificare', vecchie.length, link('vedi', 'partite', 'incassi:proforme'))}
+      ${voce(!vecchie.length, 'Proforme senza collegamento sicuro, da verificare', vecchie.length, link('vedi', 'partite', 'incassi:proforme'))}
       ${voce(!D.movimenti.length, 'Segnati in Fiammetta in attesa di NTS', D.movimenti.length, link('vedi', 'partite', 'attesa'))}
       ${voce(!senzaFido.length && !senzaTasso.length, 'Fidi e tassi da inserire', [senzaFido.length ? senzaFido.map(x => x.banca).join(', ') + ' (fido)' : '', senzaTasso.length ? senzaTasso.map(x => x.banca).join(', ') + ' (tasso)' : ''].filter(Boolean).join(' · ') || '0', link('Banche', 'banche', 'scoperti'))}
       ${voce(!ctr.ritardi.length, 'Conti uniti al c/c registrati in ritardo', ctr.ritardi.map(x => `${esc(x.u.descrizione)} fermo al ${fmtD(x.u.ultima_registrazione)}`).join(' · ') || '0', link('Banche', 'banche', 'liquidita'))}
@@ -730,7 +872,7 @@ const UI = {
     try { localStorage.setItem('fiammetta-view', v); } catch (e) {} render();
   },
   partite(tab, filtro) { if (tab) { S.partite.tab = tab; S.partite.filtro = 'tutto'; S.partite.cerca = ''; } if (filtro) S.partite.filtro = filtro; render(); },
-  tuttePf() { S.partite.tuttePf = !S.partite.tuttePf; S._keepScroll = true; render(); },
+  pfFiltro(k) { S.partite.pfFiltro = k; S._keepScroll = true; render(); },
   dett(k) { S.dett = (k && S.dett !== k) ? k : null; S._keepScroll = true; render(); const el = document.getElementById('dett'); if (el && S.dett) { const r = el.getBoundingClientRect(); if (r.top > window.innerHeight * 0.75) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
   async fido(banca, linea, campo, valore) {
     await guard(async () => {
