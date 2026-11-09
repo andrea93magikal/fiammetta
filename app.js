@@ -43,7 +43,7 @@ async function all(table, build) {
   return out;
 }
 async function loadAll() {
-  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri] = await Promise.all([
+  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti] = await Promise.all([
     S.sb.rpc('stato_dati').then(r => { if (r.error) throw r.error; return r.data; }),
     all('v_ce_mese'), all('v_sp_saldi'), all('v_banche_saldi'),
     all('v_rate', q => q.order('scadenza').order('n')), all('piani', q => q.order('tipo').order('nome')),
@@ -53,11 +53,12 @@ async function loadAll() {
     all('movimenti_app', q => q.eq('stato', 'attesa').order('data', { ascending: false })),
     all('regole_incasso'), all('v_proforme', q => q.order('datdoc', { ascending: false })),
     all('v_banca_stima'), all('v_banca_nuovi', q => q.order('dataoperaz', { ascending: false })),
-    all('erp_banche', q => q.order('codice')), all('fidi_banca'), all('v_cc_utilizzo'), all('v_oneri_banca')
+    all('erp_banche', q => q.order('codice')), all('fidi_banca'), all('v_cc_utilizzo'), all('v_oneri_banca'),
+    all('conti_uniti').catch(() => [])
   ]);
   const P = {}; par.forEach(p => P[p.chiave] = typeof p.valore === 'number' ? p.valore : num(p.valore));
   const R = {}; regole.forEach(r => R[r.conto] = r);
-  S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team, movimenti, regole, R, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri };
+  S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team, movimenti, regole, R, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti };
   await riconcilia();
   arricchisci();
   S.loadedAt = Date.now();
@@ -145,10 +146,25 @@ const proformeAttese = () => S.data.proforme.filter(p => p.stato === 'attesa');
 // Gli effetti SBF presentati (conti «c/incassi» in dare) non sono liquidità; se il conto è in avere gli effetti
 // sono già stati accreditati in anticipo e il saldo è un debito verso la banca, come gli anticipi.
 // La «carta di credito» è un conto transitorio e non entra nella liquidità.
+// Conti uniti (tabella conti_uniti): per Cassa Padana il saldo del c/c è c/c + conto «c/incassi» (conto unico, indicazione di Andrea 09/11/2026):
+// il conto unito entra nella riga del c/c e non conta più come effetti SBF. I movimenti banca contano solo quelli del c/c (rapporto 1 del file CBI).
+// Il saldo dichiarato dalla banca nel file CBI (ctrl) serve da controllo: lo scarto = saldo Fiammetta senza segnati a mano − saldo della banca.
 function posizione() {
   const D = S.data, sp = D.sp, stima = D.stimaBanca || [];
-  const righe = D.banche.map(b => ({ conto: b.conto, descrizione: b.descrizione, categoria: b.categoria, ultima_registrazione: b.ultima_registrazione, contabile: Number(b.saldo) || 0, mov: 0, app: 0, nApp: 0, info: null }));
-  stima.forEach(x => { const r = righe.find(y => y.conto === x.sottoconto); if (r) { r.info = x; r.mov = Number(x.accrediti_dopo || 0) - Number(x.addebiti_dopo || 0); } });
+  const righe = D.banche.map(b => ({ conto: b.conto, descrizione: b.descrizione, categoria: b.categoria, ultima_registrazione: b.ultima_registrazione, contabile: Number(b.saldo) || 0, mov: 0, app: 0, nApp: 0, info: null, uniti: [], ctrl: null }));
+  (D.uniti || []).forEach(u => {
+    const i = righe.findIndex(y => Number(y.conto) === Number(u.conto_unito)), r = righe.find(y => Number(y.conto) === Number(u.conto_cc));
+    if (i < 0 || !r) return;
+    const x = righe.splice(i, 1)[0]; r.contabileCC = (r.contabileCC != null ? r.contabileCC : r.contabile); r.contabile += x.contabile;
+    r.uniti.push({ conto: x.conto, descrizione: x.descrizione, contabile: x.contabile, ultima_registrazione: x.ultima_registrazione, nota: u.nota });
+  });
+  stima.forEach(x => {
+    const r = righe.find(y => y.conto === x.sottoconto); if (!r) return;
+    r.info = x; r.mov = Number(x.accrediti_dopo || 0) - Number(x.addebiti_dopo || 0);
+    // il saldo della banca confronta bene solo se il file arriva fino all'ultimo giorno con movimenti
+    if (x.saldo_banca != null && x.data_saldo_banca && (!x.ultimo_movimento || x.data_saldo_banca >= x.ultimo_movimento)) r.ctrl = { saldo: Number(x.saldo_banca), data: x.data_saldo_banca, scarto: 0 };
+  });
+  righe.forEach(r => { if (r.ctrl) r.ctrl.scarto = r.contabile + r.mov - r.ctrl.saldo; });
   const ultimoMov = stima.reduce((m, x) => (x.ultimo_movimento || '') > m ? x.ultimo_movimento : m, '');
   let senzaConto = 0, nIn = 0, nOut = 0; const dateApp = [];
   D.movimenti.filter(m => m.stato === 'attesa').forEach(m => {
@@ -179,6 +195,21 @@ function posizione() {
     liquidita: c.liquidita, stima: s.liquidita, scoperti: c.scoperti, scopertiStima: s.scoperti, anticipi: s.anticipi,
     diversa: Math.abs(s.liquidita - c.liquidita) > 0.5 || Math.abs(s.scoperti - c.scoperti) > 0.5 };
 }
+// Controlli sui saldi: conti uniti registrati in ritardo sul c/c e scarti rispetto al saldo dichiarato dalla banca nel file CBI
+const SOGLIA_SCARTO = 50;
+function controlliBanca(pos) {
+  const ritardi = [], scarti = [];
+  pos.righe.filter(r => r.categoria === 'cc').forEach(r => {
+    const banca = nomeBanca(r.descrizione);
+    r.uniti.forEach(u => { if (r.ultima_registrazione && u.ultima_registrazione && giorni(u.ultima_registrazione, r.ultima_registrazione) > 20) ritardi.push({ banca, r, u }); });
+    if (r.ctrl && Math.abs(r.ctrl.scarto) > SOGLIA_SCARTO) scarti.push({ banca, r });
+  });
+  return { ritardi, scarti };
+}
+const testoControlli = (ctr, conLink) => [
+  ...ctr.ritardi.map(x => `<b>${esc(x.banca)}</b>: il conto «${esc(x.u.descrizione)}» è registrato in NTS solo fino al ${fmtD(x.u.ultima_registrazione)} (il c/c fino al ${fmtD(x.r.ultima_registrazione)}): il saldo del c/c, che comprende questo conto, non ha ancora i movimenti successivi.`),
+  ...ctr.scarti.map(x => `<b>${esc(x.banca)}</b>: secondo il file della banca il c/c è ${eur(x.r.ctrl.saldo)} al ${fmtD(x.r.ctrl.data)}, Fiammetta ${eur(x.r.contabile + x.r.mov)} (differenza ${eur(Math.abs(x.r.ctrl.scarto))}).`)
+].join('<br>') + (conLink ? ` ${link('dettaglio', 'banche', 'scoperti')}` : '');
 const rateAperte = () => S.data.rate.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.stato_piano === 'attivo');
 // Stato di un piano. Il residuo comprende tutte le rate non pagate (anche le saltate: il debito resta).
 // Per l'AdER il contatore della decadenza = rate saltate + rate scadute non ancora confermate (come nel cruscotto storico).
@@ -276,6 +307,7 @@ function pageOggi() {
   const netto = s.liquidita - s.scoperti, nettoFine = netto + incassi - usciteRate - usciteForn;
   return `<div class="head"><h2>Oggi · ${new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2><span class="small muted">registrazioni fino al ${fmtD(D.stato.ultima_registrazione)} · movimenti banca fino al ${fmtD(pos.ultimoMov)} · ${link('stato dei dati', 'stato')}</span></div>
   ${daConf.length ? `<div class="alert"><b>${daConf.length} rate scadute senza esito</b> (${eur(sum(daConf, r => r.importo))}): vanno segnate come pagate o saltate nello ${link('Scadenziario', 'scadenziario', 'conferma')}.</div>` : ''}
+  ${(() => { const t = testoControlli(controlliBanca(pos), true); return t ? `<div class="alert"><b>Controllo con le banche</b><br>${t}</div>` : ''; })()}
   ${D.stato.conti_da_mappare ? `<div class="alert"><b>${D.stato.conti_da_mappare} conti con movimenti non ancora classificati</b>: il conto economico non li include. Si classificano in ${link('Impostazioni → Mappa dei conti', 'impostazioni')}.</div>` : ''}
   <div class="stack"><div class="row4">
     <div class="card"><h3>${link('Liquidità', 'banche', 'liquidita')}</h3><div class="kpi ${liqClass}">${eur(s.liquidita)}</div>
@@ -454,12 +486,14 @@ const fidoDi = (banca, linea) => (S.data.fidi || []).find(f => f.banca === banca
 const inFido = (banca, linea, campo, val, w) => `<input class="search" style="width:${w || 88}px;text-align:right;padding-left:6px;padding-right:6px" inputmode="decimal" value="${val == null || val === '' ? '' : campo === 'tasso' ? String(Number(val)).replace('.', ',') : n0.format(Number(val))}" placeholder="–" title="${campo === 'tasso' ? 'Tasso annuo in %, es. 6,5' : 'Importo accordato in euro'}" onchange="UI.fido('${banca}','${linea}','${campo}',this.value)">`;
 const barra = pct => pct == null ? '' : `<div class="bar" style="width:80px"><i class="${pct > 100 ? 'bad' : pct > 85 ? 'warn' : 'good'}" style="width:${Math.min(100, pct)}%"></i></div>`;
 const pc1 = (a, b) => b ? Math.round(100 * a / b) : null;
+// riga di controllo: saldo dichiarato dalla banca nel file CBI, in arancione se Fiammetta se ne discosta
+const ctrlBanca = r => r.ctrl ? `<span class="d2 ${Math.abs(r.ctrl.scarto) > SOGLIA_SCARTO ? 'warn' : ''}">in banca ${eur(r.ctrl.saldo)} al ${fmtD(r.ctrl.data)}${Math.abs(r.ctrl.scarto) > SOGLIA_SCARTO ? ' · differenza ' + eur(Math.abs(r.ctrl.scarto)) : ' · torna'}</span>` : '';
 function bancheCC(pos) {
   // conti correnti raggruppati per banca, con fido, tasso e statistiche dell'anno
   const D = S.data, g = {};
   pos.righe.filter(r => r.categoria === 'cc').forEach(r => {
-    const b = nomeBanca(r.descrizione); const x = g[b] || (g[b] = { banca: b, conti: [], saldo: 0, contabile: 0, giorni: 0, giorniRosso: 0, medio: 0, picco: 0, numeri: 0, al: null, oneri: 0, oneriVoci: {} });
-    x.conti.push(r); x.saldo += r.stimato; x.contabile += r.contabile;
+    const b = nomeBanca(r.descrizione); const x = g[b] || (g[b] = { banca: b, conti: [], saldo: 0, contabile: 0, giorni: 0, giorniRosso: 0, medio: 0, picco: 0, numeri: 0, al: null, oneri: 0, oneriVoci: {}, ctrl: null });
+    x.conti.push(r); x.saldo += r.stimato; x.contabile += r.contabile; if (r.ctrl) x.ctrl = r.ctrl;
     const u = (D.ccUtil || []).find(y => y.conto === r.conto);
     if (u) { x.giorni = Math.max(x.giorni, Number(u.giorni)); x.giorniRosso = Math.max(x.giorniRosso, Number(u.giorni_scoperto)); x.medio += Number(u.scoperto_medio); x.picco = Math.max(x.picco, Number(u.picco)); x.numeri += Number(u.numeri_debitori); x.al = u.al; }
   });
@@ -470,10 +504,10 @@ function bancheCC(pos) {
 function dettLiquidita(pos) {
   const regData = S.data.stato.ultima_registrazione, cc = pos.righe.filter(r => r.categoria !== 'anticipi').sort((a, b) => (a.categoria + nomeBanca(a.descrizione)).localeCompare(b.categoria + nomeBanca(b.descrizione)));
   const tipo = { cc: 'conto corrente', accantonamento: 'accantonamento', cassa: 'cassa contanti', sbf: 'effetti SBF (non è liquidità)' };
-  return `<p class="small muted" style="margin-top:0">Stima conto per conto: saldo contabile (registrazioni fino alla data indicata) + movimenti bancari importati in NTS dopo quella data + incassi e pagamenti segnati in Fiammetta. Un c/c in rosso va negli scoperti, non toglie liquidità. I conti c/incassi (SBF) contengono effetti presentati e non ancora accreditati: diventano liquidità solo all'accredito o se anticipati.</p>
+  return `<p class="small muted" style="margin-top:0">Stima conto per conto: saldo contabile (registrazioni fino alla data indicata) + movimenti bancari importati in NTS dopo quella data + incassi e pagamenti segnati in Fiammetta. Un c/c in rosso va negli scoperti, non toglie liquidità. I conti c/incassi (SBF) contengono effetti presentati e non ancora accreditati: diventano liquidità solo all'accredito o se anticipati. Fa eccezione Cassa Padana, dove il c/incassi è sommato al c/c (conto unico).</p>
   <div class="scroll"><table class="resp"><tr><th>Conto</th><th class="num">Contabile</th><th class="num">Movimenti banca dopo</th><th class="num">Segnati in Fiammetta</th><th class="num">Stimato</th></tr>
   ${cc.filter(r => Math.abs(r.contabile) > 0.5 || r.mov || r.app || r.info).map(r => { const i = r.info, vecchio = i && i.ultimo_movimento && giorni(i.ultimo_movimento, OGGI) > 3;
-    return `<tr><td>${esc(r.descrizione)}<span class="d2">${tipo[r.categoria] || r.categoria} · registrazioni al ${fmtD(r.ultima_registrazione || regData)}${i ? ` · <span class="${vecchio ? 'warn' : ''}">movimenti al ${fmtD(i.ultimo_movimento)}</span>` : ''}</span></td><td class="num">${eur(r.contabile)}</td><td class="num">${segnato(r.mov)}</td><td class="num">${segnato(r.app)}</td><td class="num"><b class="${r.stimato < -0.5 ? 'bad' : ''}">${eur(r.stimato)}</b>${r.categoria === 'cc' && r.stimato < -0.5 ? '<span class="d2">scoperto</span>' : ''}</td></tr>`; }).join('')}</table></div>`;
+    return `<tr><td>${esc(r.descrizione)}<span class="d2">${tipo[r.categoria] || r.categoria} · registrazioni al ${fmtD(r.ultima_registrazione || regData)}${i ? ` · <span class="${vecchio ? 'warn' : ''}">movimenti al ${fmtD(i.ultimo_movimento)}</span>` : ''}</span>${r.uniti.map(u => `<span class="d2">comprende ${esc(u.descrizione)} ${eur(u.contabile)} · <span class="${r.ultima_registrazione && u.ultima_registrazione && giorni(u.ultima_registrazione, r.ultima_registrazione) > 20 ? 'warn' : ''}">registrato al ${fmtD(u.ultima_registrazione)}</span></span>`).join('')}</td><td class="num">${eur(r.contabile)}</td><td class="num">${segnato(r.mov)}</td><td class="num">${segnato(r.app)}</td><td class="num"><b class="${r.stimato < -0.5 ? 'bad' : ''}">${eur(r.stimato)}</b>${r.categoria === 'cc' && r.stimato < -0.5 ? '<span class="d2">scoperto</span>' : ''}${ctrlBanca(r)}</td></tr>`; }).join('')}</table></div>`;
 }
 function dettScoperti(pos) {
   const bb = bancheCC(pos), al = bb.map(x => x.al).filter(Boolean).sort().pop();
@@ -481,12 +515,13 @@ function dettScoperti(pos) {
   const sconf = bb.filter(x => x.scoperto > (x.fido || 0) + 0.5);
   const totFido = sum(bb, x => x.fido || 0), totSco = sum(bb, x => x.scoperto);
   return `<div class="row4" style="margin-bottom:12px">${kpiBox('Scoperti di c/c oggi', eur(totSco), 'stima al ' + fmtD(pos.dataStima), totSco > totFido ? 'bad' : '')}${kpiBox('Fidi di cassa accordati', eur(totFido), bb.filter(x => x.fido == null).length ? bb.filter(x => x.fido == null).map(x => x.banca).join(', ') + ': fido da inserire' : 'da Fiammetta (modificabili qui sotto)')}${kpiBox('Utilizzo complessivo', totFido ? pc1(totSco, totFido) + '%' : '–', totSco > totFido ? 'oltre i fidi: sconfinamento' : 'margine ' + eur(totFido - totSco), totSco > totFido ? 'bad' : '')}${kpiBox('Oneri sui c/c nel ' + OGGI.slice(0, 4), eur(sum(bb, x => x.oneri)), 'interessi e commissioni registrati in NTS')}</div>
+  ${(() => { const t = testoControlli(controlliBanca(pos)); return t ? `<div class="alert"><b>Controllo con la banca</b><br>${t}<br><span class="small">La differenza è dovuta a registrazioni NTS mancanti o non ancora importate: finché non sono registrate, il saldo reale è quello della banca.</span></div>` : ''; })()}
   ${sconf.length ? `<div class="alert bad"><b>Sconfinamento</b>: ${sconf.map(x => `${esc(x.banca)} ${eur(x.scoperto - (x.fido || 0))} oltre il fido`).join(' · ')}. Lo sconfinamento costa più del fido: va rientrato per primo.</div>` : ''}
   <div class="alert ${ordine.length ? 'good' : ''}">${ordine.length ? `<b>Ordine consigliato per usare il fido di cassa</b> (dal tasso più basso): ${ordine.map((x, i) => `${i + 1}. ${esc(x.banca)} ${String(x.tasso).replace('.', ',')}% · disponibili ${eur(x.fido - x.scoperto)}`).join(' — ')}` : 'Inserisci fidi e tassi nella tabella qui sotto: Fiammetta indicherà da quale banca conviene usare il fido di cassa.'}</div>
   <h3 style="margin:14px 0 6px">Situazione oggi</h3>
   <div class="scroll"><table class="resp"><tr><th>Banca</th><th class="num">Saldo c/c</th><th class="num">Fido di cassa</th><th class="num">Disponibile</th><th>Utilizzo</th><th class="num">Tasso fido %</th></tr>
   ${bb.map(x => { const disp = x.fido != null ? x.fido - x.scoperto : null, u = x.fido ? pc1(x.scoperto, x.fido) : (x.scoperto > 0.5 ? null : 0);
-    return `<tr><td>${esc(x.banca)}<span class="d2">${x.conti.filter(r => Math.abs(r.stimato) > 0.5 || r.info).map(r => esc(r.descrizione)).join(' · ')}${x.note ? ' · ' + esc(x.note) : ''}</span></td><td class="num ${x.saldo < -0.5 ? 'bad' : ''}">${eur(x.saldo)}</td><td class="num">${inFido(x.banca, 'cassa', 'accordato', x.fido)}</td><td class="num ${disp != null && disp < -0.5 ? 'bad' : ''}">${disp == null ? '–' : eur(disp)}</td><td>${u == null ? (x.scoperto > 0.5 ? '<span class="pill bad">senza fido</span>' : '') : u + '%' + barra(u)}</td><td class="num">${inFido(x.banca, 'cassa', 'tasso', x.tasso, 62)}</td></tr>`; }).join('')}</table></div>
+    return `<tr><td>${esc(x.banca)}<span class="d2">${x.conti.filter(r => Math.abs(r.stimato) > 0.5 || r.info).map(r => esc(r.descrizione) + r.uniti.map(u => ' + ' + esc(u.descrizione)).join('')).join(' · ')}${x.note ? ' · ' + esc(x.note) : ''}</span></td><td class="num ${x.saldo < -0.5 ? 'bad' : ''}">${eur(x.saldo)}${x.conti.map(ctrlBanca).join('')}</td><td class="num">${inFido(x.banca, 'cassa', 'accordato', x.fido)}</td><td class="num ${disp != null && disp < -0.5 ? 'bad' : ''}">${disp == null ? '–' : eur(disp)}</td><td>${u == null ? (x.scoperto > 0.5 ? '<span class="pill bad">senza fido</span>' : '') : u + '%' + barra(u)}</td><td class="num">${inFido(x.banca, 'cassa', 'tasso', x.tasso, 62)}</td></tr>`; }).join('')}</table></div>
   <h3 style="margin:18px 0 6px">Utilizzo dall'inizio dell'anno ${al ? '(fino al ' + fmtD(al) + ')' : ''}</h3>
   <div class="scroll"><table class="resp"><tr><th>Banca</th><th class="num">Giorni in rosso</th><th class="num">Scoperto medio</th><th class="num">Utilizzo medio</th><th class="num">Costo stimato</th><th class="num">Oneri registrati</th></tr>
   ${bb.map(x => `<tr><td>${esc(x.banca)}</td><td class="num">${x.giorniRosso} su ${x.giorni}</td><td class="num">${eur(x.medio)}<span class="d2">picco ${eur(x.picco)}</span></td><td class="num">${x.fido ? pc1(x.medio, x.fido) + '%' : '–'}</td><td class="num">${x.tasso != null ? eur(x.numeri * x.tasso / 36500) : '<span class="muted">manca il tasso</span>'}</td><td class="num">${eur(x.oneri)}${Object.keys(x.oneriVoci).length ? `<span class="d2">${Object.entries(x.oneriVoci).map(([k, v]) => esc(k.toLowerCase()) + ' ' + eur(v)).join(' · ')}</span>` : ''}</td></tr>`).join('')}</table></div>
@@ -553,14 +588,14 @@ function pageBanche() {
           <tr class="tot"><td>Liquidità totale</td><td class="num">${eur(s.liquidita)}</td></tr>
           <tr class="memo"><td>Non conteggiati: effetti SBF presentati, in attesa di accredito</td><td class="num">${eur(s.sbfPresentati)}</td></tr>
         </table>
-        <div class="small muted" style="margin-top:6px">Gli effetti SBF diventano liquidità solo quando la banca li accredita o se vengono anticipati. La carta di credito aziendale è un conto di passaggio e non è liquidità.</div></div>
+        <div class="small muted" style="margin-top:6px">Gli effetti SBF diventano liquidità solo quando la banca li accredita o se vengono anticipati. La carta di credito aziendale è un conto di passaggio e non è liquidità. Per Cassa Padana il conto c/incassi è sommato al c/c (conto unico).</div></div>
       <div class="card"><h3>PFN bancaria</h3><div class="kpi">${eur(pos.pfnStima)}</div><div class="sub" style="margin-bottom:8px">clicca una voce per vederne il dettaglio</div>
         <table><tr><th></th><th class="num">${pos.diversa ? 'Contabile' : ''}</th>${pos.diversa ? '<th class="num">Stimata</th>' : ''}</tr>
           ${riga('Finanziamenti e mutui', pos.fin, pos.fin, 'fin')}${riga('Anticipi (castelletto e SBF anticipati)', c.anticipi, s.anticipi, 'anticipi')}${riga('Scoperti di conto corrente', c.scoperti, s.scoperti, 'scoperti')}${riga('− Liquidità totale', -c.liquidita, -s.liquidita, 'liquidita')}
           ${riga('PFN bancaria', pos.pfn, pos.pfnStima, null, 'tot')}${riga('Finanziamento soci', pos.soci, pos.soci, 'soci')}${riga('PFN totale', pos.pfnTot, pos.pfnTotStima, null, 'tot')}</table></div>
     </div>
     ${d ? `<div class="card dett" id="dett"><div class="head" style="margin-bottom:8px"><h3 style="margin:0">${titoli[d]}</h3><button class="btn sm" onclick="UI.dett(null)">chiudi ✕</button></div>${corpo}</div>` : ''}
-    <div class="card"><h3>Conti bancari e cassa · saldi contabili</h3><div class="scroll"><table class="resp"><tr><th>Conto</th><th>Banca</th><th>Tipo</th><th>Registrato fino al</th><th class="num">Saldo</th></tr>${conti.map(x => `<tr><td>${esc(x.descrizione)}</td><td>${esc(nomeBanca(x.descrizione))}</td><td><span class="pill plain">${tipoBanca[x.categoria] || x.categoria}</span></td><td class="nowrap ${x.ultima_registrazione && giorni(x.ultima_registrazione, regData) > 20 ? 'warn' : ''}">${fmtD(x.ultima_registrazione)}</td><td class="num ${x.saldo < -0.5 ? 'bad' : x.saldo > 0.5 ? 'good' : 'muted'}">${eur2(x.saldo)}</td></tr>`).join('')}</table></div><div class="small muted" style="margin-top:6px">Ogni saldo è aggiornato fino all'ultima registrazione in prima nota di quel conto (colonna «Registrato fino al»; in arancione se resta indietro di oltre 20 giorni rispetto alla contabilità). Segno contabile: positivo = disponibilità, negativo = debito verso la banca.</div></div>
+    <div class="card"><h3>Conti bancari e cassa · saldi contabili</h3><div class="scroll"><table class="resp"><tr><th>Conto</th><th>Banca</th><th>Tipo</th><th>Registrato fino al</th><th class="num">Saldo</th></tr>${conti.map(x => { const un = (D.uniti || []).find(u => Number(u.conto_unito) === Number(x.conto)), cc = un && D.banche.find(b => Number(b.conto) === Number(un.conto_cc)); return `<tr><td>${esc(x.descrizione)}${cc ? `<span class="d2">sommato al c/c «${esc(cc.descrizione)}»</span>` : ''}</td><td>${esc(nomeBanca(x.descrizione))}</td><td><span class="pill plain">${tipoBanca[x.categoria] || x.categoria}</span></td><td class="nowrap ${x.ultima_registrazione && giorni(x.ultima_registrazione, regData) > 20 ? 'warn' : ''}">${fmtD(x.ultima_registrazione)}</td><td class="num ${x.saldo < -0.5 ? 'bad' : x.saldo > 0.5 ? 'good' : 'muted'}">${eur2(x.saldo)}</td></tr>`; }).join('')}</table></div><div class="small muted" style="margin-top:6px">Ogni saldo è aggiornato fino all'ultima registrazione in prima nota di quel conto (colonna «Registrato fino al»; in arancione se resta indietro di oltre 20 giorni rispetto alla contabilità). Segno contabile: positivo = disponibilità, negativo = debito verso la banca.</div></div>
     <div class="card"><h3>Saldi dal portale banca (inserimento manuale)</h3>
       <form class="row" onsubmit="event.preventDefault();UI.salvaSaldo(this)">
         <div class="field"><label>Data</label><input name="data" type="date" value="${OGGI}" required></div>
@@ -581,6 +616,7 @@ function pageStato() {
   const daConf = D.rate.filter(r => r.stato_effettivo === 'da_confermare' && r.stato_piano === 'attivo');
   const vecchie = D.proforme.filter(p => p.stato === 'vecchia'), daAbb = D.scad.filter(s => s.daAbbinare);
   const bb = bancheCC(pos), senzaFido = bb.filter(x => x.fido == null), senzaTasso = bb.filter(x => x.tasso == null && (x.fido || x.scoperto > 0.5));
+  const ctr = controlliBanca(pos);
   const voce = (ok, testo, n, dove) => `<li><span>${ok ? '<span class="pill good">ok</span>' : '<span class="pill warn">da fare</span>'} ${testo}</span><b>${n}${dove ? ' · ' + dove : ''}</b></li>`;
   return `<div class="head"><h2>Stato dei dati</h2><button class="btn" onclick="UI.reload()">Aggiorna adesso</button></div>
   <div class="stack"><div class="row2">
@@ -598,11 +634,14 @@ function pageStato() {
       ${voce(!vecchie.length, 'Proforme con più di 120 giorni da verificare', vecchie.length, link('vedi', 'partite', 'incassi:proforme'))}
       ${voce(!D.movimenti.length, 'Segnati in Fiammetta in attesa di NTS', D.movimenti.length, link('vedi', 'partite', 'attesa'))}
       ${voce(!senzaFido.length && !senzaTasso.length, 'Fidi e tassi da inserire', [senzaFido.length ? senzaFido.map(x => x.banca).join(', ') + ' (fido)' : '', senzaTasso.length ? senzaTasso.map(x => x.banca).join(', ') + ' (tasso)' : ''].filter(Boolean).join(' · ') || '0', link('Banche', 'banche', 'scoperti'))}
+      ${voce(!ctr.ritardi.length, 'Conti uniti al c/c registrati in ritardo', ctr.ritardi.map(x => `${esc(x.u.descrizione)} fermo al ${fmtD(x.u.ultima_registrazione)}`).join(' · ') || '0', link('Banche', 'banche', 'liquidita'))}
+      ${voce(!ctr.scarti.length, 'Saldo c/c diverso da quello della banca', ctr.scarti.map(x => `${esc(x.banca)} ${eur(Math.abs(x.r.ctrl.scarto))}`).join(' · ') || '0', link('Banche', 'banche', 'scoperti'))}
       ${voce(!D.stato.conti_da_mappare, 'Conti da classificare nella mappa', D.stato.conti_da_mappare || 0, link('Impostazioni', 'impostazioni'))}</ul></div>
   </div>
-  <div class="card"><h3>Banche: fin dove arrivano i dati</h3><div class="scroll"><table class="resp"><tr><th>Banca</th><th>Registrazioni fino al</th><th>Movimenti importati fino al</th><th class="num">Movimenti da registrare</th><th class="num">di cui riconosciuti</th></tr>
+  <div class="card"><h3>Banche: fin dove arrivano i dati</h3><div class="scroll"><table class="resp"><tr><th>Banca</th><th>Registrazioni fino al</th><th>Movimenti fino al</th><th class="num">Movimenti da registrare</th><th class="num">Riconosciuti</th></tr>
     ${(D.stimaBanca || []).map(b => { const m = nuovi.filter(x => x.codice_banca === b.codice), vecchio = b.ultimo_movimento && giorni(b.ultimo_movimento, OGGI) > 3;
-      return `<tr><td>${esc(nomeBanca(b.banca))}<span class="d2">${esc(b.sottoconto_descr || '')}</span></td><td class="nowrap">${fmtD(b.ultima_registrazione)}</td><td class="nowrap ${vecchio ? 'warn' : 'good'}">${fmtD(b.ultimo_movimento)}${vecchio ? ' · ' + giorni(b.ultimo_movimento, OGGI) + ' giorni fa' : ''}</td><td class="num">${m.length}</td><td class="num">${m.filter(x => x.abb).length}</td></tr>`; }).join('')}</table></div>
+      const sb = b.saldo_banca != null ? `<span class="d2">c/c in banca ${eur(b.saldo_banca)} al ${fmtD(b.data_saldo_banca)}</span>` : '';
+      return `<tr><td>${esc(nomeBanca(b.banca))}<span class="d2">${esc(b.sottoconto_descr || '')}</span>${sb}</td><td class="nowrap">${fmtD(b.ultima_registrazione)}</td><td class="nowrap ${vecchio ? 'warn' : 'good'}">${fmtD(b.ultimo_movimento)}${vecchio ? ' · ' + giorni(b.ultimo_movimento, OGGI) + ' giorni fa' : ''}</td><td class="num">${m.length}</td><td class="num">${m.filter(x => x.abb).length}</td></tr>`; }).join('')}</table></div>
     <div class="small muted" style="margin-top:6px">Per avere Fiammetta aggiornata ogni giorno basta importare in NTS i movimenti bancari (file CBI) di tutte le banche: non serve registrarli in prima nota. In arancione le banche con l'ultimo movimento più vecchio di 3 giorni.</div></div>
   </div>`;
 }
