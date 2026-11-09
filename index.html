@@ -17,7 +17,7 @@ h2{font-size:22px;font-weight:650}
 h3{font-size:15px;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-size:12px}
 .muted{color:var(--muted)}.small{font-size:13px}.right{text-align:right}.nowrap{white-space:nowrap}
 .good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
-.shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.shell{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
 .side{background:var(--side);color:var(--side-ink);padding:18px 14px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
 .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px}
 .brand .flame{width:28px;height:28px;flex:none}
@@ -28,10 +28,21 @@ h3{font-size:15px;font-weight:650;color:var(--muted);text-transform:uppercase;le
 .nav button:hover{background:rgba(255,255,255,.07);color:#fff}
 .nav button.on{background:var(--accent);color:#fff}
 .side .foot{margin-top:auto;font-size:12px;color:#b9ab9c;padding:8px 10px;line-height:1.6}
-.side .foot button{background:none;border:1px solid #5a4a40;color:#e9ddd0;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;margin-top:6px}
-.main{padding:22px 26px 60px;max-width:1240px;width:100%}
+.side .foot .act{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.side .foot button{background:none;border:1px solid #5a4a40;color:#e9ddd0;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px}
+.main{padding:22px 26px 60px;max-width:1480px;width:100%;min-width:0}
 .head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.grid>*,.stack>*,.row4>*,.row2>*,.row23>*,.row3>*,.split>*{min-width:0}
+.stack{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+.row4{display:grid;gap:14px;grid-template-columns:repeat(4,minmax(0,1fr))}
+.row2{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.row23{display:grid;gap:14px;grid-template-columns:minmax(0,2fr) minmax(0,3fr)}
+.row3{display:grid;gap:14px;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.5fr)}
+.split{display:grid;gap:22px;grid-template-columns:minmax(0,1fr) minmax(0,2fr);align-items:start}
+@media (max-width:1280px){.row4{grid-template-columns:repeat(2,minmax(0,1fr))}.row3{grid-template-columns:repeat(2,minmax(0,1fr))}.row3>.full-md{grid-column:1/-1}}
+@media (max-width:1080px){.row23{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:1320px){.split{grid-template-columns:minmax(0,1fr)}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 2px rgba(40,30,20,.04)}
 .card.wide{grid-column:1/-1}
 .kpi{font-size:28px;font-weight:700;letter-spacing:-.01em;margin:2px 0 4px}
@@ -41,7 +52,7 @@ h3{font-size:15px;font-weight:650;color:var(--muted);text-transform:uppercase;le
 .pill.good{background:#e3f4e6;color:#1f6b31}.pill.warn{background:#fff0d6;color:#9a4f00}.pill.bad{background:#fde3e3;color:#9c1c1c}.pill.plain{background:#f0ebe4}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:bottom}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 tr.tot td{font-weight:700;border-top:2px solid #d8cfc4;background:#fbf9f6}
 tr.sub td{color:var(--muted)}
@@ -93,24 +104,56 @@ details.piano .body{padding:0 16px 14px;overflow:auto}
 h3 a.lnk,.kpi a.lnk{color:inherit;text-decoration:none;border-bottom:1px dashed #c9b9a6}
 h3 a.lnk:hover,.kpi a.lnk:hover,.sub a.lnk:hover{color:var(--accent)}
 .sub a.lnk{color:inherit;text-decoration:underline dotted}
+table.ce td:first-child,table.ce th:first-child{position:sticky;left:0;background:var(--card);z-index:1}
+table.ce tr.tot td:first-child{background:#fbf9f6}table.ce tr.sec td:first-child{background:#f3eee7}
+td .d2{display:block;font-size:12.5px;color:var(--muted);font-weight:400}
 @media (max-width:900px){
-  .shell{grid-template-columns:1fr}
-  .side{position:sticky;height:auto;flex-direction:row;align-items:center;padding:8px 10px;overflow-x:auto;gap:4px;z-index:10}
-  .brand{padding:0 8px 0 2px}.brand small{display:none}.brand b{font-size:16px}
-  .nav{flex-direction:row}.nav button{padding:7px 10px;white-space:nowrap;font-size:13.5px}
-  .side .foot{display:none}
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .side{position:static;height:auto;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:10px 12px;gap:8px}
+  .brand{padding:0}.brand small{display:none}.brand b{font-size:17px}
+  .nav{grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+  .nav button{padding:8px 6px;text-align:center;font-size:13.5px;line-height:1.2;min-height:40px}
+  .side .foot{grid-column:2;grid-row:1;margin:0;padding:0}
+  .side .foot .info{display:none}
+  .side .foot .act{margin:0}
+  .side .foot button{padding:7px 11px;font-size:13px}
   .main{padding:14px 12px 50px}
   .kpi{font-size:24px}
+}
+@media (max-width:700px){
+  .nav{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .side .foot .act .pw{display:none}
+  .row4,.row2,.row3{grid-template-columns:minmax(0,1fr)}
+  .card{padding:12px 13px}
+  h2{font-size:20px}
+  input,select,textarea,.search,.btn{font-size:16px}
+  .btn{min-height:38px}
+  .btn.sm{min-height:34px;padding:5px 11px;font-size:14px}
+  select.btn.sm,input.btn.sm{font-size:16px}
+  details.piano>summary .nowrap{white-space:normal}
+  .tabs button{min-height:36px}
+  .search{max-width:none}
+  details.piano>summary{padding:11px 12px;gap:6px 12px}
+  details.piano .body{padding:0 12px 12px}
+  table.resp,table.resp tbody{display:block}
+  table.resp tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;padding:10px 0;border-bottom:1px solid var(--line)}
+  table.resp tr:first-child{display:none}
+  table.resp td{display:block;border:0;padding:0;text-align:left;white-space:normal}
+  table.resp td::before{content:attr(data-label);display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+  table.resp td:first-child,table.resp td[data-label=""],table.resp td.full{grid-column:1/-1}
+  table.resp td:first-child::before,table.resp td[data-label=""]::before{display:none}
+  table.resp td:first-child{font-weight:600}
+  table.resp td[data-label=""]{text-align:right}
+  table.resp td:empty{display:none}
+  table.resp tr.tot{background:#fbf9f6;padding:10px 8px;border-radius:8px}
+  table.ce{font-size:13px}table.ce td:first-child{min-width:140px;max-width:170px}
 }
 </style>
 </head>
 <body>
 <div id="app"><div class="loading">Avvio…</div></div>
-<script>
-// supabase-js: prima la copia locale (supabase.js nel repository), se manca la versione fissata sul CDN
-window.__sbFallback = function () { document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"><\/script>'); };
-</script>
-<script src="supabase.js" onerror="__sbFallback()"></script>
+<!-- supabase-js 2.119.0 dal CDN, con impronta SHA-384: se il file cambiasse il browser si rifiuterebbe di eseguirlo -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js" integrity="sha384-uteMfOloLDGt042uDz+xHGF3ym63/WQ6rFq7murQRG8Ih7QrXGEGNtWd8688sb4O" crossorigin="anonymous"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>
