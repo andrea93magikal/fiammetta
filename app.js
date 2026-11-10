@@ -397,7 +397,8 @@ const testoControlli = (ctr, conLink) => [
 ].join('<br>') + (conLink ? ` ${link('dettaglio', 'banche', 'scoperti')}` : '');
 // Piani AdER dal più urgente: prima quelli con più rate scadute (contatore), poi con più scaduto in euro; i piani non attivi in fondo
 const cmpAder = (a, b) => ((b.p.stato || 'attivo') === 'attivo') - ((a.p.stato || 'attivo') === 'attivo') || b.s.contatore - a.s.contatore || b.s.scadutoImporto - a.s.scadutoImporto || b.s.residuo - a.s.residuo;
-const erogazione = p => p.data_erogazione || (p.prima_rata ? addMonths(String(p.prima_rata).slice(0, 10), -(p.cadenza_mesi || 1)) : null);
+// Data di erogazione: non è nei dati importati (i piani contengono solo le rate residue), quindi non la si inventa: si usa solo se è stata inserita (colonna piani.data_erogazione)
+const erogazione = p => p.data_erogazione ? String(p.data_erogazione).slice(0, 10) : null;
 const rateAperte = () => S.data.rate.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.stato_piano === 'attivo');
 // Stato di un piano. Il residuo comprende tutte le rate non pagate (anche le saltate: il debito resta).
 // Per l'AdER il contatore della decadenza = rate saltate + rate scadute non ancora confermate (come nel cruscotto storico).
@@ -481,7 +482,7 @@ const GL = [
   [/^totale$/, "Residuo da pagare di tutti i piani attivi."],
   [/^f24 da versare/, "Modelli F24 ricevuti dal commercialista: ogni versamento è una rata con scadenza e importo."],
   [/^(rateizzazioni ader|aderenti)/, "Piani con l'Agenzia delle Entrate-Riscossione, in ordine di urgenza: prima quelli con più rate scadute. Da 6 rate scadute o saltate è zona rossa, all'8ª il piano decade."],
-  [/^finanziamenti/, "Finanziamenti e mutui con le banche: rate per data di erogazione, raggruppate per banca."],
+  [/^finanziamenti/, "Finanziamenti e mutui con le banche, raggruppati per banca e, dentro ogni banca, per data di erogazione (quando è stata inserita). Le rate scadute e non pagate sono segnate «in ritardo»."],
   // Banche
   [/^debito contabile/, "Capitale ancora da rimborsare secondo la contabilità NTS. NON comprende gli interessi (futuri né maturati): per quello c'è il «residuo da piano»."],
   [/^residuo da piano/, "Quanto resta da pagare secondo il piano di ammortamento: capitale e interessi delle rate non ancora pagate. È più alto del debito contabile perché comprende gli interessi."],
@@ -818,7 +819,7 @@ function pageScadenziario() {
       if (t === 'ader') return titolo + ps.map(p => ({ p, s: statoAder(p) })).sort(cmpAder).map(x => cardPiano(x.p)).join('');
       // Finanziamenti e SIMEST: raggruppati per banca e, dentro ogni banca, per data di erogazione; le rate con la scadenza passata e non pagate sono «in ritardo»
       if (t === 'finanziamento' || t === 'simest') {
-        const gr = {}; ps.slice().sort((a, b) => String(erogazione(a) || '').localeCompare(String(erogazione(b) || ''))).forEach(p => (gr[p.controparte || p.nome] = gr[p.controparte || p.nome] || []).push(p));
+        const gr = {}; ps.slice().sort((a, b) => String(erogazione(a) || '9999').localeCompare(String(erogazione(b) || '9999')) || String(a.prima_rata || '').localeCompare(String(b.prima_rata || '')) || String(a.nome).localeCompare(String(b.nome))).forEach(p => (gr[p.controparte || p.nome] = gr[p.controparte || p.nome] || []).push(p));
         return titolo + Object.keys(gr).sort((a, b) => a.localeCompare(b)).map(b => { const L = gr[b], st = L.map(p => statoAder(p)), rit = st.filter((x, i) => x.scadute > 0 && (L[i].stato || 'attivo') === 'attivo');
           return `<div class="gh"><b>${esc(b)}</b><span class="small muted">${L.length} ${L.length === 1 ? 'finanziamento' : 'finanziamenti'} · residuo ${eur(sum(st, x => x.residuo))}</span>${rit.length ? `<span class="pill bad" title="Rate con la scadenza passata e non pagate: siamo in ritardo. Vanno segnate pagate (se lo sono) o regolarizzate con la banca.">in ritardo · ${sum(rit, x => x.scadute)} ${sum(rit, x => x.scadute) === 1 ? 'rata' : 'rate'} · ${eur(sum(rit, x => x.scadutoImporto))}</span>` : ''}</div>` + L.map(p => cardPiano(p)).join(''); }).join('');
       }
@@ -849,7 +850,7 @@ function cardPiano(p) {
     ? `${s.pagate}/${s.tot} pagate · contatore <b class="${rosso ? 'zr-n' : s.margine <= 3 ? 'warn' : ''}">${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="warn">${s.daConf} da confermare</span>` : ''})`
     : `${s.pagate}/${s.tot} pagate${s.saltate ? ` · <span class="bad">${s.saltate} non pagate</span>` : ''}${s.daConf ? ` · <span class="warn">${s.daConf} da confermare</span>` : ''}`;
   const ritPill = inRit ? ` <span class="pill bad" title="Ci sono rate con la scadenza passata e non pagate: siamo in ritardo sul piano. Vanno segnate pagate (se lo sono) o regolarizzate con la banca.">in ritardo · ${s.scadute} ${s.scadute === 1 ? 'rata' : 'rate'} · da ${s.maxGiorni} gg</span>` : '';
-  const erog = (p.tipo === 'finanziamento' || p.tipo === 'simest') && erogazione(p) ? ` · erogato ${p.data_erogazione ? '' : '≈ '}${fmtD(erogazione(p))}` : '';
+  const erog = (p.tipo === 'finanziamento' || p.tipo === 'simest') && erogazione(p) ? ` · erogato il ${fmtD(erogazione(p))}` : '';
   const bannerRosso = rosso ? `<div class="alert bad" style="margin-top:0"><b>Zona rossa: ${s.contatore} rate scadute su ${s.soglia}.</b> ${s.margine > 0 ? `Mancano ${s.margine} ${s.margine === 1 ? 'rata' : 'rate'} alla decadenza: alla ${s.soglia}ª rata non pagata il piano decade automaticamente e l'intero debito torna esigibile in un'unica soluzione. <b>Pagare queste rate con priorità</b> (scaduto ${eur2(s.scadutoImporto)}).` : `La soglia di ${s.soglia} rate è raggiunta: il piano può essere già decaduto, da verificare subito con l'Agenzia (scaduto ${eur2(s.scadutoImporto)}).`}</div>` : '';
   return `<details class="piano ${rosso ? 'zr' : ''}" ${S._open === p.id || rosso ? 'open' : ''} ontoggle="UI.toggle('${p.id}',this.open)"><summary><span class="nm">${esc(p.nome)} ${stPill}${rosso ? ' <span class="pill bad">ZONA ROSSA</span>' : ''}${ritPill}<div class="small muted">${esc(p.controparte || '')}${p.descrizione ? ' · ' + esc(p.descrizione) : ''}${erog}</div></span>
     <span class="small nowrap">${stato}</span>
@@ -1350,7 +1351,7 @@ function renderModal() {
     <div class="field"><label>Descrizione</label><input name="descrizione"></div>
     <div class="row"><div class="field"><label>Capitale / totale</label><input name="capitale_iniziale" inputmode="decimal"></div><div class="field"><label>Numero rate</label><input name="n_rate" type="number" min="1" required></div><div class="field"><label>Ogni (mesi)</label><input name="cadenza_mesi" type="number" min="1" value="1" required></div></div>
     <div class="row"><div class="field"><label>Prima rata il</label><input name="prima_rata" type="date" required></div><div class="field"><label>Importo rata</label><input name="rata" inputmode="decimal" required></div><div class="field"><label>Prima rata diversa</label><input name="rata1" inputmode="decimal" placeholder="se diversa"></div></div>
-    <div class="row"><div class="field"><label>Soglia di decadenza (AdER)</label><input name="soglia_decadenza" type="number" placeholder="8"></div><div class="field"><label>Note</label><input name="note"></div></div>
+    <div class="row"><div class="field"><label>Soglia di decadenza (AdER)</label><input name="soglia_decadenza" type="number" placeholder="8"></div><div class="field"><label>Erogato il (finanziamenti)</label><input name="data_erogazione" type="date"></div><div class="field"><label>Note</label><input name="note"></div></div>
     <div class="small muted" style="margin-bottom:10px">Le rate vengono generate automaticamente; l'id del piano si ricava dal nome. Le rate già pagate si segnano dopo, dalla tabella.</div>
     <div class="row"><button class="btn primary">Crea il piano</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
   } else if (M.type === 'password') {
@@ -1619,6 +1620,7 @@ const UI = {
       const n = Number(g('n_rate')), cad = Number(g('cadenza_mesi')) || 1, rata = num(g('rata')), rata1 = num(g('rata1')), prima = g('prima_rata');
       if (!n || !rata || !prima) throw new Error('compila numero rate, importo e prima rata');
       const piano = { id, tipo: g('tipo'), nome, controparte: g('controparte') || null, descrizione: g('descrizione') || null, capitale_iniziale: num(g('capitale_iniziale')), n_rate: n, cadenza_mesi: cad, prima_rata: prima, rata, rata1, soglia_decadenza: g('soglia_decadenza') ? Number(g('soglia_decadenza')) : (g('tipo') === 'ader' ? (S.data.P.soglia_decadenza_ader || 8) : null), note: g('note') || null, stato: 'attivo', creato_da: chi() };
+      if (g('data_erogazione')) piano.data_erogazione = g('data_erogazione');
       let r = await S.sb.from('piani').insert(piano); if (r.error) throw r.error;
       const rate = []; for (let i = 0; i < n; i++) rate.push({ id: id + '-' + (i + 1), piano_id: id, n: i + 1, scadenza: addMonths(prima, i * cad), importo: (i === 0 && rata1) ? rata1 : rata, stato: 'futura' });
       r = await S.sb.from('rate').insert(rate); if (r.error) throw r.error;
