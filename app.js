@@ -34,7 +34,7 @@ const num = v => { let t = String(v == null ? '' : v).replace(/[\s€]/g, ''); i
   else if ((t.match(/\./g) || []).length > 1) t = t.replace(/\./g, '');
   const x = parseFloat(t); return isNaN(x) ? null : x; };
 const sum = (arr, f) => arr.reduce((a, r) => a + (Number(f ? f(r) : r) || 0), 0);
-const OGGI = isoLocal();
+let OGGI = isoLocal(); // si riaggiorna a ogni lettura dei dati: dopo la mezzanotte «oggi» cambia anche con la pagina rimasta aperta
 let toastT; function toast(msg, ms) { let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); } t.textContent = msg; clearTimeout(toastT); toastT = setTimeout(() => t.remove(), ms || 2800); }
 
 // ---------- Lettura dati ----------
@@ -49,7 +49,8 @@ async function all(table, build) {
   return out;
 }
 async function loadAll() {
-  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti, castBanca, castMov, castRiba, castNts, cOrdini, cBolle, cFatture, cIncassi, docF24, antic] = await Promise.all([
+  OGGI = isoLocal();
+  const [stato, ce, sp, banche, rate, piani, scad, par, saldi, team, movimenti, regole, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti, castBanca, castMov, castRiba, castNts, cOrdini, cBolle, cFatture, cIncassi, docF24, antic, dilaz] = await Promise.all([
     S.sb.rpc('stato_dati').then(r => { if (r.error) throw r.error; return r.data; }),
     all('v_ce_mese'), all('v_sp_saldi'), all('v_banche_saldi'),
     all('v_rate', q => q.order('scadenza').order('n')), all('piani', q => q.order('tipo').order('nome')),
@@ -65,13 +66,14 @@ async function loadAll() {
     all('v_castelletti_riba').catch(() => []), all('v_castelletti_nts', q => q.order('datreg').order('numreg').order('riga')).catch(() => []),
     all('v_catena_ordini').catch(() => []), all('v_catena_bolle').catch(() => []), all('v_catena_fatture').catch(() => []), all('v_incassi_banca').catch(() => []),
     all('documenti_f24', q => q.order('caricato_il', { ascending: false })).catch(() => []),
-    all('anticipi_presentati', q => q.order('data_presentazione', { ascending: false }).order('creato_il', { ascending: false })).catch(() => [])
+    all('anticipi_presentati', q => q.order('data_presentazione', { ascending: false }).order('creato_il', { ascending: false })).catch(() => []),
+    all('dilazioni', q => q.order('creato_il', { ascending: false })).catch(() => [])
   ]);
   const P = {}; par.forEach(p => P[p.chiave] = typeof p.valore === 'number' ? p.valore : num(p.valore));
   const R = {}; regole.forEach(r => R[r.conto] = r);
   S.data = { stato, ce, sp, banche, rate, piani, scad, par, P, saldi, team, movimenti, regole, R, proforme, stimaBanca, nuovi, anagBanche, fidi, ccUtil, oneri, uniti,
     cast: { banca: castBanca, mov: castMov, riba: castRiba, nts: castNts },
-    catena: { ordini: cOrdini, bolle: cBolle, fatture: cFatture, incassi: cIncassi }, docF24, antic };
+    catena: { ordini: cOrdini, bolle: cBolle, fatture: cFatture, incassi: cIncassi }, docF24, antic, dilazioni: dilaz };
   collegaCatena();
   await riconcilia();
   arricchisci();
@@ -80,6 +82,7 @@ async function loadAll() {
 async function reloadRate() { S.data.rate = await all('v_rate', q => q.order('scadenza').order('n')); S.data.piani = await all('piani', q => q.order('tipo').order('nome')); arricchisci(); }
 async function reloadDocF24() { S.data.docF24 = await all('documenti_f24', q => q.order('caricato_il', { ascending: false })); }
 async function reloadAntic() { S.data.antic = await all('anticipi_presentati', q => q.order('data_presentazione', { ascending: false }).order('creato_il', { ascending: false })); }
+async function reloadDilazioni() { S.data.dilazioni = await all('dilazioni', q => q.order('creato_il', { ascending: false })); await reloadMovimenti(); }
 async function reloadMovimenti() { S.data.movimenti = await all('movimenti_app', q => q.eq('stato', 'attesa').order('data', { ascending: false })); await riconcilia(); arricchisci(); }
 
 // Collega gli incassi segnati in Fiammetta alle partite e chiude quelli che NTS ha ormai registrato
@@ -87,7 +90,12 @@ async function riconcilia() {
   const D = S.data, aperte = new Map(D.scad.map(s => [s.chiave, s]));
   const chiudi = [], collega = [];
   for (const m of D.movimenti) {
-    if (m.chiave_partita) { if (!aperte.has(m.chiave_partita)) chiudi.push(m.id); continue; }
+    if (m.chiave_partita) {
+      const s = aperte.get(m.chiave_partita);
+      // pagamento di una rata di dilazione: NTS lo ha registrato quando il residuo della partita è sceso almeno dell'importo pagato
+      if (!s || (m.rata_n != null && m.residuo_nts != null && Math.abs(Number(s.importo)) <= Number(m.residuo_nts) - Number(m.importo) + 0.5)) chiudi.push(m.id);
+      continue;
+    }
     if (m.chiave_doc) {
       const pf = D.proforme.find(p => p.chiave === m.chiave_doc);
       if (!pf) continue;
@@ -222,11 +230,36 @@ function statoProforme() {
 const norm = s =>(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const PAROLE_VUOTE = ['srl', 'spa', 'snc', 'sas', 'unipersonale', 'societa', 'socio', 'unico', 'store', 'group', 'italia'];
 const nomeIn = (nome, testo) => norm(nome).split(' ').filter(w => w.length > 3 && !PAROLE_VUOTE.includes(w)).slice(0, 2).some(w => testo.includes(' ' + w + ' '));
-const docRif = s => s.daAbbinare ? (s.accontoPer ? 'da abbinare a ft ' + s.accontoPer.numdoc : 'da abbinare') : s.apertura ? 'saldo 2025' : (s.numdoc ? 'ft ' + s.numdoc : '');
+const docRif = s => (s.daAbbinare ? (s.accontoPer ? 'da abbinare a ft ' + s.accontoPer.numdoc : 'da abbinare') : s.apertura ? 'saldo 2025' : (s.numdoc ? 'ft ' + s.numdoc : '')) + (s.tr && s.tr.n ? ` · rata ${s.tr.n}/${s.tr.tot}` : '');
+// Dilazioni concordate (tabella dilazioni): la partita si divide nelle rate accordate con la controparte. Il residuo aperto in NTS, meno i pagamenti
+// segnati a mano che NTS non ha ancora registrato, si assegna alle rate dall'ultima alla prima: le rate già pagate escono da sole, quelle
+// scoperte restano. Quello che nessuna rata copre (rate inserite per meno del residuo) resta con la scadenza originale: nulla sparisce in silenzio.
+const r2 = v => Math.round(v * 100) / 100;
+const assorbito = (m, R) => m.residuo_nts != null && R <= Number(m.residuo_nts) - Number(m.importo) + 0.5;
+function espandiDilazioni(dilMap) {
+  const D = S.data; D.scadX = [];
+  D.scad.forEach(s => {
+    s.dil = null; const d = dilMap[s.chiave];
+    if (!d || s.piano || s.daAbbinare || s.accontoDa || s.accontoPer || !Array.isArray(d.rate) || !d.rate.length) { D.scadX.push(s); return; }
+    const segno = s.importo < 0 ? -1 : 1, R = Math.abs(s.importo);
+    const pend = D.movimenti.filter(m => m.stato === 'attesa' && m.chiave_partita === s.chiave && !assorbito(m, R)), pendTot = r2(sum(pend, m => m.importo)), rest = Math.max(0, r2(R - pendTot));
+    const tr = d.rate.slice().sort((a, b) => String(a.data).localeCompare(String(b.data))).map((t, i) => ({ n: i + 1, data: String(t.data).slice(0, 10), importo: Number(t.importo) || 0, aperto: 0 }));
+    let r = rest, extra = 0;
+    for (let i = tr.length - 1; i >= 0 && r > 0.004; i--) { const q = Math.min(tr[i].importo, r); tr[i].aperto = q; r = r2(r - q); }
+    if (r > 0.004) { if (r <= 1) tr[tr.length - 1].aperto = r2(tr[tr.length - 1].aperto + r); else extra = r; }
+    for (let i = 0; i < tr.length - 1; i++) if (tr[i].aperto > 0.004 && tr[i].aperto <= 1 && tr[i].aperto < tr[i].importo) { tr[i + 1].aperto = r2(tr[i + 1].aperto + tr[i].aperto); tr[i].aperto = 0; } // briciole di arrotondamento
+    const righe = tr.filter(t => t.aperto > 0.004).map(t => ({ ...s, kx: s.chiave + '#' + t.n, importo: segno * t.aperto, datsca: t.data, attesa: t.data, ritardo: giorni(t.data, OGGI), datscaNTS: s.datsca, tr: { n: t.n, tot: tr.length, importoRata: t.importo, data: t.data }, dilazione: d, copertura: null, banca_pag: null }));
+    if (extra > 0.004) righe.push({ ...s, kx: s.chiave + '#x', importo: segno * extra, datscaNTS: s.datsca, tr: { n: 0, tot: tr.length, importoRata: extra }, dilazione: d, copertura: null, banca_pag: null });
+    s.dil = { d, tr, pend, pendTot, rest, extra, righe, residuoNTS: R };
+    righe.forEach(x => D.scadX.push(x));
+  });
+}
 function arricchisci() {
   const D = S.data;
+  const dilMap = {}; (D.dilazioni || []).forEach(d => { if (d.stato === 'attiva') dilMap[d.chiave_partita] = d; });
   const copertaPartita = {}, copertaDoc = {};
-  D.movimenti.forEach(m => { if (m.chiave_partita) copertaPartita[m.chiave_partita] = m; if (m.chiave_doc) copertaDoc[m.chiave_doc] = m; });
+  // un pagamento segnato su una partita con dilazione è il pagamento di una rata: non copre l'intera partita (la partita si divide in rate, vedi espandiDilazioni)
+  D.movimenti.forEach(m => { if (m.chiave_partita && !dilMap[m.chiave_partita]) copertaPartita[m.chiave_partita] = m; if (m.chiave_doc) copertaDoc[m.chiave_doc] = m; });
   const pianiForn = D.piani.filter(p => p.tipo === 'fornitore' && p.stato === 'attivo');
   const inPiano = nome => { const n = norm(nome); if (!n) return null; return pianiForn.find(p => { const c = norm(p.controparte || p.nome); const k = c.split(' ')[0]; return c && ((' ' + n + ' ').includes(' ' + c + ' ') || (n.length > 3 && (' ' + c + ' ').includes(' ' + n + ' ')) || (k.length > 3 && (n === k || n.startsWith(k + ' ')))); }); };
   D.scad.forEach(s => {
@@ -244,29 +277,39 @@ function arricchisci() {
     D.scad.filter(s => s.tipo_cf === 'C' && !s.daAbbinare && !s.apertura && s.importo > 0 && !s.copertura),
     (c, f) => c.conto === f.conto ? { a: -c.importo, b: f.importo, dd: Math.abs(giorni(c.datdoc || c.datsca, f.datdoc || f.datsca)) } : null, [TOL_ESATTA])
     .forEach((f, c) => { f.accontoDa = c; c.accontoPer = f; c.attesa = f.attesa; c.ritardo = f.ritardo; });
+  espandiDilazioni(dilMap);
   D.proforme.forEach(p => { p.totdoc = Number(p.totdoc); p.copertura = copertaDoc[p.chiave] || null; p.banca_pag = null; p.pagata = null; p.pagata_da = null; });
   // Movimenti bancari importati in NTS dopo l'ultima registrazione: li riconosco per importo (e nome, se c'è nella descrizione).
   // Una partita riconosciuta esce da scaduti e scadenze: il movimento è già nella liquidità stimata.
   const usate = new Set(), nuovi = D.nuovi || [];
-  nuovi.forEach(m => { m.abb = null; m.addebito = Number(m.addebito) || 0; m.accredito = Number(m.accredito) || 0; });
-  const forn = D.scad.filter(s => s.tipo_cf === 'F' && s.importo < 0 && !s.piano && !s.copertura);
-  const cli = D.scad.filter(s => s.tipo_cf === 'C' && s.importo > 0 && !s.copertura && !s.accontoDa);
-  nuovi.filter(m => m.addebito > 0).forEach(m => {
-    const c = forn.filter(s => !usate.has(s.chiave) && Math.abs(-s.importo - m.addebito) < 0.01 && giorni(s.datsca, m.dataoperaz) <= 45 && giorni(s.datsca, m.dataoperaz) >= -10)
-      .sort((a, b) => Math.abs(giorni(a.datsca, m.dataoperaz)) - Math.abs(giorni(b.datsca, m.dataoperaz)))[0];
-    if (c) { usate.add(c.chiave); c.banca_pag = m; m.abb = { tipo: 'fornitore', nome: c.controparte, rif: docRif(c) }; }
+  nuovi.forEach(m => { m.abb = null; m.manuale = null; m.addebito = Number(m.addebito) || 0; m.accredito = Number(m.accredito) || 0; });
+  // Incassi e pagamenti segnati a mano che la banca ha poi importato: stesso verso, stessa banca, importo uguale al centesimo e date vicine
+  // (± FINESTRA_MANUALE giorni) sono lo stesso movimento. Si abbinano uno a uno e il segnato a mano NON si somma alla banca (vedi posizione()).
+  D.movimenti.forEach(x => { x.inBanca = null; });
+  D.movimenti.filter(x => x.stato === 'attesa' && x.banca !== 'Cassa').slice().sort((a, b) => String(a.data).localeCompare(String(b.data))).forEach(x => {
+    const k = x.tipo === 'incasso' ? 'accredito' : 'addebito', imp = Number(x.importo) || 0, dd = m => Math.abs(giorni(String(x.data).slice(0, 10), String(m.dataoperaz).slice(0, 10)));
+    const c = nuovi.filter(m => !m.manuale && m[k] > 0 && Math.abs(m[k] - imp) < 0.01 && (!x.banca || nomeBanca(m.banca) === x.banca) && dd(m) <= FINESTRA_MANUALE).sort((a, b) => dd(a) - dd(b))[0];
+    if (c) { c.manuale = x; x.inBanca = c; c.abb = { tipo: 'segnato a mano', nome: x.controparte || '', rif: 'segnato in Fiammetta il ' + fmtD(x.data) }; }
   });
-  nuovi.filter(m => m.accredito > 0).forEach(m => {
+  const forn = D.scadX.filter(s => s.tipo_cf === 'F' && s.importo < 0 && !s.piano && !s.copertura);
+  const cli = D.scadX.filter(s => s.tipo_cf === 'C' && s.importo > 0 && !s.copertura && !s.accontoDa);
+  nuovi.filter(m => m.addebito > 0 && !m.manuale).forEach(m => {
+    const c = forn.filter(s => !usate.has(s.kx || s.chiave) && Math.abs(-s.importo - m.addebito) < 0.01 && giorni(s.datsca, m.dataoperaz) <= 45 && giorni(s.datsca, m.dataoperaz) >= -10)
+      .sort((a, b) => Math.abs(giorni(a.datsca, m.dataoperaz)) - Math.abs(giorni(b.datsca, m.dataoperaz)))[0];
+    if (c) { usate.add(c.kx || c.chiave); c.banca_pag = m; m.abb = { tipo: 'fornitore', nome: c.controparte, rif: docRif(c) }; }
+  });
+  nuovi.filter(m => m.accredito > 0 && !m.manuale).forEach(m => {
     const testo = ' ' + norm((m.descr1 || '') + ' ' + (m.descr2 || '')) + ' ';
-    const cand = cli.filter(s => !usate.has(s.chiave) && Math.abs(s.importo - m.accredito) < 0.01 && giorni(s.datsca, m.dataoperaz) <= 240 && giorni(s.datsca, m.dataoperaz) >= -90);
+    const cand = cli.filter(s => !usate.has(s.kx || s.chiave) && Math.abs(s.importo - m.accredito) < 0.01 && giorni(s.datsca, m.dataoperaz) <= 240 && giorni(s.datsca, m.dataoperaz) >= -90);
     const c = cand.find(s => nomeIn(s.controparte, testo)) || cand[0];
-    if (c) { usate.add(c.chiave); c.banca_pag = m; m.abb = { tipo: 'cliente', nome: c.controparte, rif: docRif(c) }; }
+    if (c) { usate.add(c.kx || c.chiave); c.banca_pag = m; m.abb = { tipo: 'cliente', nome: c.controparte, rif: docRif(c) }; }
   });
   pagamentiProforme();
   statoProforme();
 }
-const partiteC = () => S.data.scad.filter(s => s.tipo_cf === 'C' && !s.copertura && !s.banca_pag);
-const partiteF = () => S.data.scad.filter(s => s.tipo_cf === 'F' && !s.copertura && !s.banca_pag);
+const scadX = () => S.data.scadX || S.data.scad;
+const partiteC = () => scadX().filter(s => s.tipo_cf === 'C' && !s.copertura && !s.banca_pag);
+const partiteF = () => scadX().filter(s => s.tipo_cf === 'F' && !s.copertura && !s.banca_pag);
 // fornitori: importi lordi, solo le partite in avere (decisione del 06/11: i saldi in dare non si analizzano)
 const debitiF = () => partiteF().filter(s => s.importo < 0);
 const proformeAttese = () => S.data.proforme.filter(p => p.stato === 'attesa' || p.stato === 'da_fatturare');
@@ -283,7 +326,7 @@ const proformeAttese = () => S.data.proforme.filter(p => p.stato === 'attesa' ||
 // Il saldo dichiarato dalla banca nel file CBI (ctrl) serve da controllo: lo scarto = saldo Fiammetta senza segnati a mano − saldo della banca.
 // Anticipi (tabella rapporti_banca): per i rapporti del file CBI di Cassa Padana l'utilizzo reale è il saldo dichiarato dalla banca, se il file è recente
 // (FRESCO_BANCA giorni): sostituisce il saldo contabile NTS, che si aggiorna solo quando Miriam registra gli anticipi (e spesso sul conto sbagliato).
-const FRESCO_BANCA = 10, FERMO_NTS = 30, GIORNI_ANTICIPO = 120;
+const FRESCO_BANCA = 10, FERMO_NTS = 30, GIORNI_ANTICIPO = 120, FINESTRA_MANUALE = 10;
 function posizione() {
   const D = S.data, sp = D.sp, stima = D.stimaBanca || [];
   const righe = D.banche.map(b => ({ conto: b.conto, descrizione: b.descrizione, categoria: b.categoria, ultima_registrazione: b.ultima_registrazione, contabile: Number(b.saldo) || 0, mov: 0, app: 0, nApp: 0, info: null, uniti: [], ctrl: null }));
@@ -313,6 +356,7 @@ function posizione() {
     const cc = righe.filter(x => x.categoria === 'cc' && m.banca && nomeBanca(x.descrizione) === m.banca);
     const r = m.banca === 'Cassa' ? righe.find(x => x.categoria === 'cassa') : (cc.find(x => x.info) || cc[0]);
     const ultimo = r && r.info ? r.info.ultimo_movimento : (r ? '' : ultimoMov);
+    if (m.inBanca) return; // la banca lo ha gia' importato (abbinato per importo e data in arricchisci()): e' nei movimenti, non si somma due volte
     if (ultimo && m.data <= ultimo) return; // gia' compreso nei movimenti bancari importati
     if (r) { r.app += v; r.nApp++; } else senzaConto += v;
     if (v >= 0) nIn++; else nOut++; dateApp.push(m.data);
@@ -351,6 +395,9 @@ const testoControlli = (ctr, conLink) => [
   ...ctr.ritardi.map(x => `<b>${esc(x.banca)}</b>: il conto «${esc(x.u.descrizione)}» è registrato in NTS solo fino al ${fmtD(x.u.ultima_registrazione)} (il c/c fino al ${fmtD(x.r.ultima_registrazione)}): il saldo del c/c, che comprende questo conto, non ha ancora i movimenti successivi.`),
   ...ctr.scarti.map(x => `<b>${esc(x.banca)}</b>: secondo il file della banca il c/c è ${eur(x.r.ctrl.saldo)} al ${fmtD(x.r.ctrl.data)}, Fiammetta ${eur(x.r.contabile + x.r.mov)} (differenza ${eur(Math.abs(x.r.ctrl.scarto))}).`)
 ].join('<br>') + (conLink ? ` ${link('dettaglio', 'banche', 'scoperti')}` : '');
+// Piani AdER dal più urgente: prima quelli con più rate scadute (contatore), poi con più scaduto in euro; i piani non attivi in fondo
+const cmpAder = (a, b) => ((b.p.stato || 'attivo') === 'attivo') - ((a.p.stato || 'attivo') === 'attivo') || b.s.contatore - a.s.contatore || b.s.scadutoImporto - a.s.scadutoImporto || b.s.residuo - a.s.residuo;
+const erogazione = p => p.data_erogazione || (p.prima_rata ? addMonths(String(p.prima_rata).slice(0, 10), -(p.cadenza_mesi || 1)) : null);
 const rateAperte = () => S.data.rate.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.stato_piano === 'attivo');
 // Stato di un piano. Il residuo comprende tutte le rate non pagate (anche le saltate: il debito resta).
 // Per l'AdER il contatore della decadenza = rate saltate + rate scadute non ancora confermate (come nel cruscotto storico).
@@ -361,7 +408,8 @@ function statoAder(p) {
   const prossima = rs.find(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.scadenza >= OGGI);
   const soglia = p.soglia_decadenza || S.data.P.soglia_decadenza_ader || 8;
   const contatore = saltate + daConf;
-  return { saltate, daConf, contatore, residue: nonPagate.length, residuo: sum(nonPagate, r => r.importo), pagate: rs.filter(r => r.stato === 'pagata').length, prossima, soglia, margine: soglia - contatore, tot: rs.length, totale: sum(rs, r => r.importo) };
+  const scadute = nonPagate.filter(r => r.scadenza < OGGI), zonaRossa = Math.max(1, soglia - 2); // zona rossa = a 2 rate dalla decadenza (6 su 8)
+  return { scadute: scadute.length, scadutoImporto: sum(scadute, r => r.importo), maxGiorni: scadute.length ? giorni(scadute[0].scadenza, OGGI) : 0, zonaRossa, rosso: p.tipo === 'ader' && contatore >= zonaRossa, saltate, daConf, contatore, residue: nonPagate.length, residuo: sum(nonPagate, r => r.importo), pagate: rs.filter(r => r.stato === 'pagata').length, prossima, soglia, margine: soglia - contatore, tot: rs.length, totale: sum(rs, r => r.importo) };
 }
 function ceAnno(anno) {
   const rows = S.data.ce.filter(r => r.anno === anno);
@@ -384,13 +432,160 @@ const tipoPiano = { finanziamento: 'Finanziamenti', simest: 'SIMEST', fornitore:
 const tipoPiano1 = { finanziamento: 'finanziamento', simest: 'SIMEST', fornitore: 'piano fornitore', ader: 'AdER', soci: 'soci', f24: 'F24', altro: 'altro' };
 const tipoBanca = { cc: 'conto corrente', sbf: 'incassi / SBF', accantonamento: 'accantonamento', anticipi: 'anticipi', cassa: 'cassa' };
 function nomeBanca(d) { d = (d || '').toLowerCase(); if (d.includes('verona')) return 'BPER Verona'; if (d.includes('emilia') || d.startsWith('bper')) return 'BPER'; if (d.includes('padana')) return 'Cassa Padana'; if (d.includes('credem')) return 'Credem'; if (d.includes('sondrio')) return 'Pop. Sondrio'; if (d.includes('valsabbina')) return 'Valsabbina'; if (d.includes('cassa')) return 'Cassa contanti'; return 'Altro'; }
-const link = (testo, view, arg) => `<a href="#" class="lnk" onclick="UI.go('${view}'${arg ? ",'" + arg + "'" : ''});return false">${testo}</a>`;
+const link = (testo, view, arg) => `<a href="#" class="lnk" onclick="event.stopPropagation();UI.go('${view}'${arg ? ",'" + arg + "'" : ''});return false">${testo}</a>`;
+
+// ---------- Spiegazioni al passaggio del mouse (come in Scintilla) ----------
+// Ogni titolo, riquadro, intestazione di colonna, pulsante e valore importante ha una spiegazione di che cosa è e come si calcola.
+// Si cerca per testo (minuscolo, spazi singoli): stringa = testo uguale, espressione regolare = testo che corrisponde. I «title» già presenti diventano spiegazioni uguali.
+// Le definizioni sono quelle del documento «Indicatori e definizioni»: se cambia una regola di calcolo va cambiata anche qui.
+const GL = [
+  // Oggi
+  ['liquidità', "I soldi disponibili oggi in banca e in cassa, stimati conto per conto: saldo contabile NTS + movimenti bancari importati dopo l'ultima registrazione + incassi e pagamenti segnati in Fiammetta (mai contati due volte). Conta i c/c in attivo, i conti di accantonamento e la cassa contanti. I c/c in rosso vanno negli scoperti; gli effetti SBF presentati non sono liquidità."],
+  ['scoperti e anticipi', "Debito verso le banche già utilizzato: scoperti dei c/c in rosso + anticipi (fatture Italia ed estero, SBF anticipati). Per Cassa Padana l'utilizzo degli anticipi è il saldo dichiarato dalla banca nel file CBI, se recente (al massimo 10 giorni)."],
+  ['pfn bancaria', "Posizione finanziaria netta = finanziamenti e mutui (debito contabile, senza interessi) + anticipi + scoperti − liquidità. Più è bassa meglio è. Il finanziamento dei soci si somma a parte."],
+  ['scaduto', "Fatture aperte oltre la data attesa di incasso (clienti) o oltre la scadenza (fornitori, esclusi i piani di rientro). Una partita con dilazione concordata vale con le date delle rate. Non sono contati i pagamenti già visti in banca o segnati in Fiammetta."],
+  [/^clienti \d/, "Scaduto dei clienti: fatture aperte la cui data attesa di incasso è passata. La data attesa è la scadenza NTS, o quella della regola del cliente (es. NordicFire: fattura + 10 giorni), o la rata di una dilazione concordata. Clic per vedere l'elenco."],
+  [/^fornitori \d/, "Scaduto dei fornitori: fatture in avere con scadenza passata (importi lordi), fuori dai piani di rientro. Una partita dilazionata vale con le date delle rate. Clic per vedere l'elenco."],
+  [/^prossimi 30 giorni/, "Quello che entra e quello che esce da oggi ai prossimi 30 giorni, dalle scadenze note. Non comprende stipendi, spese correnti e F24 non ancora ricevuti."],
+  ['uscite', "Quanto si deve pagare nei prossimi 30 giorni: rate di finanziamenti, F24, piani (AdER, fornitori) e fatture fornitori in scadenza. Clic per l'elenco dei fornitori."],
+  ['incassi attesi', "Fatture ai clienti che si prevede di incassare nei prossimi 30 giorni, secondo la data attesa (scadenza NTS, regola del cliente o rata di dilazione). Clic per l'elenco."],
+  ['proforme da incassare', "Proforme di ordini non ancora fatturati: il cliente deve ancora pagarle (o ha pagato e la merce non è partita). Quando la merce viene fatturata il credito passa nelle fatture e la proforma smette di contare, così non si somma due volte."],
+  ['saldo netto dei conti a fine periodo', "Liquidità − scoperti di c/c, più gli incassi attesi e meno le uscite dei prossimi 30 giorni. Senza proforme, stipendi, F24 non ancora noti e spese correnti: è un minimo, non una previsione completa."],
+  ['rateizzazioni ader', "Piani di rateizzazione con l'Agenzia delle Entrate-Riscossione. Il contatore = rate saltate + rate scadute non ancora confermate: all'ottava rata non pagata il piano decade. Da 6 in su è zona rossa: pagare per prime."],
+  // Crediti e debiti
+  ['fatture oltre la data attesa', "Fatture ai clienti ancora aperte la cui data attesa di incasso è passata. Non comprende gli incassi già visti in banca o segnati in Fiammetta. Clic: elenco filtrato."],
+  ['fatture attese entro 30 giorni', "Fatture ai clienti con data attesa di incasso da oggi ai prossimi 30 giorni. Clic: elenco filtrato."],
+  ['fatture attese oltre 30 giorni', "Fatture ai clienti con data attesa di incasso oltre i 30 giorni. Clic: elenco filtrato."],
+  ['totale da incassare', "Fatture aperte da incassare + proforme ancora da incassare. Le proforme già fatturate non si sommano: il credito è già nelle fatture. Clic: elenco completo."],
+  ['scadute', "Fatture fornitori con scadenza passata, fuori dai piani di rientro. Importi lordi, solo partite in avere (i saldi in dare sono a parte). Una partita dilazionata vale con le date delle rate."],
+  ['in scadenza entro 30 giorni', "Fatture fornitori con scadenza (o rata di dilazione) da oggi ai prossimi 30 giorni. Clic: elenco filtrato."],
+  ['oltre 30 giorni', "Fatture fornitori con scadenza oltre i 30 giorni. Clic: elenco filtrato."],
+  ['totale fornitori da pagare', "Tutte le fatture fornitori in avere ancora da pagare, importi lordi, fuori dai piani di rientro."],
+  ['piani di rientro', "Debiti verso fornitori con un piano di rate concordato a parte (es. Tecno 3FP, Torneria Alpone): conta il residuo del piano, non le singole fatture, che restano aperte in NTS."],
+  ['movimenti da registrare', "Movimenti del c/c che la banca ha mandato nel file CBI, importati in NTS ma non ancora registrati in prima nota. Sono già nella liquidità stimata."],
+  ['accrediti', "Somma dei movimenti in entrata importati dalla banca e non ancora registrati in NTS."],
+  ['addebiti', "Somma dei movimenti in uscita importati dalla banca e non ancora registrati in NTS."],
+  ['riconosciuti', "Movimenti abbinati per importo (e nome) a una fattura, a una proforma o a un incasso/pagamento segnato in Fiammetta: la partita esce da scaduto e scadenze, e il segnato a mano non si somma alla banca."],
+  [/^fatture · /, "Fatture clienti ancora da incassare, raggruppate per cliente. «Incassato» le toglie subito dagli importi attesi; «dilaziona» registra rate concordate con il cliente."],
+  [/^fatture da pagare/, "Fatture fornitori ancora da pagare, raggruppate per fornitore, importi lordi. «Pagato» le toglie subito; «dilaziona» registra rate concordate con il fornitore."],
+  ['scadenza nts', "Scadenza registrata nel gestionale NTS. Se c'è una dilazione concordata, sotto è indicata la data della rata, che è quella che vale."],
+  [/^(data )?attesa$/, "Data in cui si prevede di incassare: scadenza NTS, oppure scadenza o data fattura + giorni della regola del cliente, oppure rata di dilazione."],
+  ['ritardo', "Giorni trascorsi dalla data attesa (clienti) o dalla scadenza (fornitori). Giallo fino a 60 giorni, rosso oltre. «tra N gg» = non ancora scaduta."],
+  ['pagamento e banca', "Modalità di pagamento e banca d'appoggio registrate in NTS sulla partita."],
+  ['riconosciuto come', "A che cosa è stato abbinato il movimento di banca: fattura cliente, fattura fornitore, proforma, o incasso/pagamento segnato a mano in Fiammetta."],
+  ['ordine, bolla e fattura', "Il percorso della proforma: ordine del cliente → bolla (DDT) → fattura. NTS non collega la proforma: la collega Fiammetta, uno a uno, per cliente, importo e data."],
+  ['segnati in fiammetta', "Incassi e pagamenti segnati a mano che NTS non ha ancora registrato: contano subito nella liquidità stimata e spariscono da soli quando NTS li registra."],
+  ['rate concordate', "Le rate della dilazione accordata con la controparte. La rata «pagata» è quella che il residuo aperto in NTS non copre più."],
+  // Scadenziario
+  ['residuo da pagare dei piani attivi', "Per ogni tipo di piano, tutte le rate non ancora pagate (capitale e interessi), comprese le saltate e le scadute da confermare: è quanto resta da versare. Clic su un tipo per andare al suo elenco."],
+  [/^totale$/, "Residuo da pagare di tutti i piani attivi."],
+  [/^f24 da versare/, "Modelli F24 ricevuti dal commercialista: ogni versamento è una rata con scadenza e importo."],
+  [/^(rateizzazioni ader|aderenti)/, "Piani con l'Agenzia delle Entrate-Riscossione, in ordine di urgenza: prima quelli con più rate scadute. Da 6 rate scadute o saltate è zona rossa, all'8ª il piano decade."],
+  [/^finanziamenti/, "Finanziamenti e mutui con le banche: rate per data di erogazione, raggruppate per banca."],
+  // Banche
+  [/^debito contabile/, "Capitale ancora da rimborsare secondo la contabilità NTS. NON comprende gli interessi (futuri né maturati): per quello c'è il «residuo da piano»."],
+  [/^residuo da piano/, "Quanto resta da pagare secondo il piano di ammortamento: capitale e interessi delle rate non ancora pagate. È più alto del debito contabile perché comprende gli interessi."],
+  ['differenza', "Debito contabile − residuo da piano. Normalmente il residuo del piano è più alto perché comprende gli interessi; una differenza diversa va controllata."],
+  ['contabile', "Saldo registrato in prima nota NTS, fino all'ultima registrazione."],
+  [/^stimat[oa]$/, "Contabile + movimenti bancari importati dopo l'ultima registrazione + incassi e pagamenti segnati in Fiammetta."],
+  ['accordato', "Importo massimo concesso dalla banca su quella linea (fido di cassa o castelletto)."],
+  ['utilizzato', "Importo della linea già usato."],
+  ['disponibile', "Accordato − utilizzato: quanto si può ancora usare."],
+  [/^utilizzo/, "Quota dell'accordato già utilizzata."],
+  [/^tasso/, "Tasso annuo applicato dalla banca, in %. Serve per scegliere dove scoprirsi (prima la linea più economica) e stimare il costo."],
+  ['scoperti di c/c oggi', "Somma dei c/c in rosso alla stima di oggi."],
+  ['anticipi nella pfn', "Anticipi su fatture e SBF anticipati: sono debito verso la banca e entrano nella PFN."],
+  ['finanziamento soci (contabile)', "Finanziamento dei soci alla società (conto soci c/finanziamento). Non è nella PFN bancaria ma in quella totale."],
+  [/^castelletti accordati/, "Somma degli accordati delle linee di anticipo (SBF, fatture Italia, estero, export). Mostra solo le linee con accordato inserito."],
+  ['fidi di cassa accordati', "Somma dei fidi di cassa dei c/c inseriti."],
+  [/^documento$/, "Fattura o documento della partita (numero e data). «saldo 2025» = saldo di apertura dell'anno; «da abbinare» = pagamento registrato in NTS ma non abbinato alla fattura."],
+  [/^importo$/, "Importo in euro (IVA compresa per le fatture; capitale + interessi per le rate)."],
+  [/^scadenza$/, "Data di scadenza della rata. Se è passata e la rata non è pagata, è in ritardo."],
+  [/^stato$/, "Per le rate: «da confermare» = scadenza passata senza che nessuno abbia segnato pagata o saltata. Per le proforme: a che punto è il percorso ordine → bolla → fattura → incasso."],
+  [/^n\.$/, "Numero della rata sul totale del piano."],
+  [/^pagata il$/, "Data in cui la rata è stata pagata e banca usata."],
+  [/^segnata da$/, "Chi ha segnato lo stato della rata e quando; l'eventuale PDF collegato."],
+  [/^conto$/, "Conto del piano dei conti di NTS."],
+  [/^banca$/, "Banca del conto."],
+  [/^tipo$/, "Tipo di conto: conto corrente, c/incassi SBF, accantonamento, anticipi o cassa."],
+  [/^registrato fino al$/, "Data dell'ultima registrazione in prima nota su quel conto: dopo quella data valgono i movimenti importati dalla banca."],
+  [/^saldo$/, "Saldo contabile in prima nota NTS."],
+  [/^saldo c\/c$/, "Saldo del c/c letto sul portale della banca e inserito a mano: serve come controllo, non cambia la stima."],
+  [/^anticipi$/, "Anticipi utilizzati letti sul portale della banca e inseriti a mano."],
+  [/^fido c\/c$/, "Fido di cassa del c/c letto sul portale della banca."],
+  [/^conti bancari e cassa/, "Saldi contabili NTS dei conti bancari e della cassa, con l'ultima registrazione di ciascuno."],
+  [/^saldi dal portale banca/, "Saldi letti sul portale della banca e inseriti a mano: servono come controllo e non cambiano la stima."],
+  [/^simest( ·|$)/, "Finanziamenti agevolati SIMEST (fiere internazionali, esportatrici): rate semestrali."],
+  [/^finanziamento soci( ·|$)/, "Finanziamento dei soci alla società: piano di rimborso (da gennaio 2027)."],
+  [/^piani di rientro fornitori( ·|$)/, "Piani di rate concordati con fornitori per debiti pregressi: contano il residuo del piano, non le singole fatture."],
+  // Pulsanti e funzioni
+  ['oggi', "Situazione di oggi: liquidità, scoperti e anticipi, PFN, scaduto, prossimi 30 giorni e rate AdER."],
+  ['crediti e debiti', "Fatture da incassare (clienti, proforme), da pagare (fornitori), movimenti già in banca e incassi/pagamenti segnati a mano."],
+  ['scadenziario', "Rate di finanziamenti, F24, AdER e piani di rientro con scadenza, stato e conferma dei pagamenti."],
+  ['banche e pfn', "Conti, scoperti, fidi, anticipi e castelletti, finanziamenti, PFN."],
+  ['conto economico', "Ricavi, costi e margini per trimestre, come registrati in prima nota."],
+  ['stato dati', "Quando sono arrivati gli ultimi dati dal gestionale e che cosa manca o va controllato."],
+  ['impostazioni', "Parametri, regole di incasso per cliente, mappa dei conti e team."],
+  ['incassato', "Segna che il cliente ha pagato: l'importo entra subito nella liquidità stimata e la partita esce dai crediti. Resta «in attesa» finché NTS non lo registra, poi si chiude da solo. Se la banca importa lo stesso movimento, non si somma due volte."],
+  ['pagato', "Segna che hai pagato il fornitore: l'importo esce subito dalla liquidità stimata e la partita dai debiti. Resta «in attesa» finché NTS non lo registra, poi si chiude da solo. Se la banca importa lo stesso movimento, non si somma due volte."],
+  ['incassata', "Segna che il cliente ha pagato la proforma."],
+  ['non valida', "Esclude la proforma dai conti (rifatta, annullata o errata)."],
+  ['aggiorna', "Rilegge subito i dati dal database. Fiammetta lo fa anche da sola: controlla ogni 2 minuti se il gestionale ha mandato dati nuovi e quando riapri la scheda."],
+  ['aggiorna adesso', "Rilegge subito i dati dal database."],
+  ['pagata', "Segna la rata come pagata, con data e banca."],
+  ['saltata', "Segna la rata come non pagata: nell'AdER conta per la decadenza e il debito resta nel residuo."],
+  ['annulla', "Annulla questa registrazione (chi ne ha il permesso, dopo conferma)."],
+  ['aggiungi f24', "Inserisce un modello F24 ricevuto dal commercialista: scadenza, importo e ciò che si paga; il PDF si può allegare."],
+  ['nuovo piano', "Crea un piano di rate: finanziamento, AdER, piano fornitore o altro."],
+  ['aggiungi rata', "Aggiunge una rata a questo piano."]
+];
+const GL_LAB = new Map(); // cache testo -> spiegazione
+function spiega(testo) {
+  const k = String(testo || '').toLowerCase().replace(/\s+/g, ' ').trim(); if (!k) return null;
+  if (GL_LAB.has(k)) return GL_LAB.get(k);
+  let r = null; for (const [m, t] of GL) { if (typeof m === 'string' ? m === k : m.test(k)) { r = t; break; } }
+  GL_LAB.set(k, r); return r;
+}
+// Dopo ogni disegno della pagina: i «title» diventano spiegazioni istantanee e i testi del glossario ricevono la loro
+function tooltips() {
+  const root = document.getElementById('app'); if (!root) return;
+  root.querySelectorAll('[title]').forEach(el => { const t = el.getAttribute('title'); if (t) { el.setAttribute('data-tip', t); el.removeAttribute('title'); } });
+  root.querySelectorAll('th, h3, .lab, .nav button, .act button, .head button, .btn, .pill, summary .nm').forEach(el => {
+    if (el.dataset.tip) return;
+    const nodo = el.matches('summary .nm') ? el.firstChild : null;
+    const t = spiega(nodo ? nodo.textContent : el.textContent); if (t) { el.setAttribute('data-tip', t); if (el.matches('th, h3, .lab')) el.classList.add('tip'); }
+  });
+  // il valore di un riquadro ha la spiegazione della sua etichetta (o del titolo della scheda)
+  root.querySelectorAll('.kpi').forEach(el => {
+    if (el.dataset.tip) return;
+    const prev = el.previousElementSibling, lab = prev && prev.matches('.lab') ? prev.textContent : (el.closest('.card') && el.closest('.card').querySelector('h3') ? el.closest('.card').querySelector('h3').textContent : '');
+    const t = spiega(el.textContent) || spiega(lab); if (t) el.setAttribute('data-tip', t);
+  });
+}
+(function iniziaTooltip() {
+  const box = document.createElement('div'); box.className = 'tooltip'; box.setAttribute('role', 'tooltip'); document.body.appendChild(box);
+  let cur = null, timer = null;
+  const mostra = (el, x, y) => {
+    const t = el.getAttribute('data-tip'); if (!t) return; cur = el; box.textContent = t; box.classList.add('on');
+    const w = box.offsetWidth, h = box.offsetHeight; let L = x + 14, T = y + 18;
+    if (L + w > window.innerWidth - 8) L = Math.max(8, window.innerWidth - w - 8);
+    if (T + h > window.innerHeight - 8) T = Math.max(8, y - h - 12);
+    box.style.left = L + 'px'; box.style.top = T + 'px';
+  };
+  const nascondi = () => { cur = null; clearTimeout(timer); box.classList.remove('on'); };
+  document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (!el) return nascondi(); if (el === cur) return; clearTimeout(timer); timer = setTimeout(() => mostra(el, e.clientX, e.clientY), 180); box._xy = [e.clientX, e.clientY]; });
+  document.addEventListener('mousemove', e => { box._xy = [e.clientX, e.clientY]; if (cur) { const el = e.target.closest && e.target.closest('[data-tip]'); if (el !== cur) return nascondi(); mostra(cur, e.clientX, e.clientY); } });
+  document.addEventListener('mouseout', e => { if (cur && !(e.relatedTarget && cur.contains(e.relatedTarget))) nascondi(); });
+  document.addEventListener('scroll', nascondi, true); document.addEventListener('mousedown', nascondi, true); document.addEventListener('keydown', nascondi, true);
+  // sul telefono non c'è il passaggio del mouse: un tocco prolungato su un testo con spiegazione la mostra per qualche secondo
+  document.addEventListener('contextmenu', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el && window.matchMedia('(hover: none)').matches) { e.preventDefault(); const r = el.getBoundingClientRect(); mostra(el, r.left, r.top); clearTimeout(timer); timer = setTimeout(nascondi, 6000); } });
+})();
 
 function shell(inner) {
   return `<div class="shell"><aside class="side">
     <div class="brand"><svg class="flame" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2c2 6 9 9 9 17a9 9 0 0 1-18 0c0-4 2-6 3-8 0 3 1 5 3 5 0-5 1-10 3-14z" fill="#d9480f"/><path d="M16 14c1 3 4 4 4 8a4 4 0 0 1-8 0c0-3 2-4 4-8z" fill="#f59f00"/></svg><div><b>Fiammetta</b><small>Magikal · amministrazione</small></div></div>
     <nav class="nav">${VISTE.map(([k, l]) => `<button class="${S.view === k ? 'on' : ''}" onclick="UI.go('${k}')">${l}</button>`).join('')}</nav>
-    <div class="foot"><div class="info">${esc(S.me ? S.me.nome : S.email)}<br>Gestionale: ${S.data.stato.ultimo_invio ? fmtDT(S.data.stato.ultimo_invio) : 'mai'}<br>Registrazioni fino al ${fmtD(S.data.stato.ultima_registrazione)}</div><div class="act"><button onclick="UI.reload()">Aggiorna</button><button class="pw" onclick="UI.modal('password')">Password</button><button onclick="UI.logout()">Esci</button></div></div>
+    <div class="foot"><div class="info">${esc(S.me ? S.me.nome : S.email)}<br>Gestionale: ${S.data.stato.ultimo_invio ? fmtDT(S.data.stato.ultimo_invio) : 'mai'}<br>Pagina letta alle ${new Date(S.loadedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}<br>Registrazioni fino al ${fmtD(S.data.stato.ultima_registrazione)}</div><div class="act"><button onclick="UI.reload()">Aggiorna</button><button class="pw" onclick="UI.modal('password')">Password</button><button onclick="UI.logout()">Esci</button></div></div>
   </aside><main class="main">${inner}</main></div>${S.modal ? renderModal() : ''}`;
 }
 // Sul telefono le tabelle «resp» diventano schede: ogni cella riceve il nome della sua colonna
@@ -404,8 +599,10 @@ function etichette() {
 function render() {
   if (!S.data) return;
   const page = { oggi: pageOggi, partite: pagePartite, scadenziario: pageScadenziario, ce: pageCE, banche: pageBanche, stato: pageStato, impostazioni: pageImpostazioni }[S.view] || pageOggi;
-  const sc = window.scrollY; $('#app').innerHTML = shell(page()); etichette(); window.scrollTo(0, S._keepScroll ? sc : 0); S._keepScroll = false;
+  const sc = window.scrollY; $('#app').innerHTML = shell(page()); etichette(); tooltips(); window.scrollTo(0, S._keepScroll ? sc : 0); S._keepScroll = false;
+  if (S._anchor) { const a = document.getElementById(S._anchor); S._anchor = null; if (a) a.scrollIntoView({ block: 'start' }); }
   const first = document.querySelector('.modal input:not([type=hidden]):not([type=checkbox]),.modal select');
+  if (S.modal && S.modal.type === 'dilazione') UI.dilTot();
   const sicuro = document.querySelector('.modal button[autofocus]');
   if (sicuro && S.modal && !S.modal._f) { sicuro.focus(); S.modal._f = true; }
   else if (first && S.modal && !S.modal._f) { first.focus(); S.modal._f = true; }
@@ -413,7 +610,8 @@ function render() {
 
 // ---------- Oggi ----------
 const segnato = v => Math.abs(v) < 0.5 ? '–' : (v > 0 ? '+ ' : '− ') + eur(Math.abs(v));
-const kpiBox = (label, val, sub, cls) => `<div><div class="small muted">${label}</div><div class="kpi sm ${cls || ''}">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+// kpiBox(etichetta, valore, sottotitolo, classe, vai): se «vai» (istruzione JS, es. "UI.go('partite','pagamenti:prossime')") è presente il riquadro è cliccabile
+const kpiBox = (label, val, sub, cls, vai) => `<div${vai ? ` class="kclk" role="button" tabindex="0" onclick="${vai}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();${vai}}"` : ''}><div class="small muted lab">${label}</div><div class="kpi sm ${cls || ''}">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
 function pianiFornitori() {
   const g = {};
   S.data.piani.filter(p => p.tipo === 'fornitore' && p.stato === 'attivo').forEach(p => { const k = p.controparte || p.nome; const x = g[k] || (g[k] = { nome: k, piani: [], residuo: 0, partite: [] }); x.piani.push(p); x.residuo += statoAder(p).residuo; });
@@ -434,7 +632,7 @@ function pageOggi() {
   const prof = proformeAttese().filter(p => p.atteso <= fine), profTutte = proformeAttese();
   const usciteRate = sum(rate30, r => r.importo), usciteForn = -sum(forn30, x => x.importo), incassi = sum(cli30, x => x.importo), incProf = sum(prof, p => p.totdoc);
   const daConf = D.rate.filter(r => r.stato_effettivo === 'da_confermare' && r.stato_piano === 'attivo');
-  const ader = D.piani.filter(p => p.tipo === 'ader' && p.stato === 'attivo').map(p => ({ p, s: statoAder(p) }));
+  const ader = D.piani.filter(p => p.tipo === 'ader' && p.stato === 'attivo').map(p => ({ p, s: statoAder(p) })).sort(cmpAder), aderRosso = ader.filter(x => x.s.rosso);
   const eventi = [...rate30.map(r => ({ d: r.scadenza, t: r.tipo === 'f24' ? 'F24' + (r.nota ? ' · ' + r.nota : '') : r.nome + (r.n_rate ? ` · rata ${r.n}/${r.n_rate}` : ''), v: -r.importo, k: tipoPiano1[r.tipo] || r.tipo })),
     ...forn30.map(x => ({ d: x.datsca, t: (x.controparte || x.conto) + (x.numdoc ? ` · ft ${x.numdoc}` : ''), v: x.importo, k: 'fornitore' })),
     ...cli30.map(x => ({ d: x.attesa, t: (x.controparte || x.conto) + (x.numdoc ? ` · ft ${x.numdoc}` : '') + (x.attesa !== x.datsca ? ' · regola cliente' : ''), v: x.importo, k: 'cliente' }))];
@@ -449,27 +647,29 @@ function pageOggi() {
   const liqClass = s.liquidita < (P.uscite_fisse_mese || 0) ? 'warn' : 'good';
   const netto = s.liquidita - s.scoperti, nettoFine = netto + incassi - usciteRate - usciteForn;
   return `<div class="head"><h2>Oggi · ${new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h2><span class="small muted">registrazioni fino al ${fmtD(D.stato.ultima_registrazione)} · movimenti banca fino al ${fmtD(pos.ultimoMov)} · ${link('stato dei dati', 'stato')}</span></div>
+  ${aderRosso.length ? `<div class="alert bad" style="font-size:15px"><b>AdER in zona rossa: ${aderRosso.map(x => esc(x.p.nome) + ' ' + x.s.contatore + '/' + x.s.soglia + ' rate scadute (' + eur(x.s.scadutoImporto) + ')').join(' · ')}.</b> Alla ${aderRosso[0].s.soglia}ª rata non pagata il piano decade automaticamente: dare priorità a questi pagamenti. ${link('Vai al piano', 'scadenziario', 'piani')}</div>` : ''}
   ${daConf.length ? `<div class="alert"><b>${daConf.length} rate scadute senza esito</b> (${eur(sum(daConf, r => r.importo))}): vanno segnate come pagate o saltate nello ${link('Scadenziario', 'scadenziario', 'conferma')}.</div>` : ''}
   ${(() => { const t = testoControlli(controlliBanca(pos), true); return t ? `<div class="alert"><b>Controllo con le banche</b><br>${t}</div>` : ''; })()}
   ${D.stato.conti_da_mappare ? `<div class="alert"><b>${D.stato.conti_da_mappare} conti con movimenti non ancora classificati</b>: il conto economico non li include. Si classificano in ${link('Impostazioni → Mappa dei conti', 'impostazioni')}.</div>` : ''}
   <div class="stack"><div class="row4">
-    <div class="card"><h3>${link('Liquidità', 'banche', 'liquidita')}</h3><div class="kpi ${liqClass}">${eur(s.liquidita)}</div>
+    <div class="card kclk2" onclick="UI.go('banche','liquidita')"><h3>${link('Liquidità', 'banche', 'liquidita')}</h3><div class="kpi ${liqClass}">${eur(s.liquidita)}</div>
       <div class="sub">bancaria ${eur(s.liqBanca)} (c/c in attivo ${eur(s.ccAttivi)} + accantonamenti ${eur(s.acc)}) · cassa ${eur(s.cassa)}</div>
       ${s.sbfPresentati > 0.5 ? `<div class="sub">non conteggiati: effetti SBF presentati ${eur(s.sbfPresentati)}</div>` : ''}
       ${pos.diversa ? `<div class="sub">stimata al ${fmtD(pos.dataStima)} · contabile al ${fmtD(D.stato.ultima_registrazione)}: ${eur(pos.c.liquidita)}</div>` : ''}
+      ${pos.ultimoMov && giorni(pos.ultimoMov, OGGI) >= 3 ? `<div class="sub warn">movimenti banca fermi al ${fmtD(pos.ultimoMov)} (${giorni(pos.ultimoMov, OGGI)} giorni): incassi e pagamenti più recenti si vedono solo se segnati con «Incassato» / «Pagato»</div>` : ''}
       ${P.uscite_fisse_mese ? `<div class="sub">Uscite fisse di un mese: ${eur(P.uscite_fisse_mese)} ${s.liquidita < P.uscite_fisse_mese ? '<span class="pill warn">sotto soglia</span>' : '<span class="pill good">coperte</span>'}</div>` : ''}</div>
-    <div class="card"><h3>${link('Scoperti e anticipi', 'banche', 'scoperti')}</h3><div class="kpi">${eur(s.scoperti + s.anticipi)}</div><div class="sub">scoperti di c/c ${eur(s.scoperti)}${Math.abs(s.scoperti - pos.c.scoperti) > 0.5 ? ` (contabile ${eur(pos.c.scoperti)})` : ''} · anticipi ${link(eur(s.anticipi), 'banche', 'anticipi')}</div>${(() => { const K = castelletti(pos); return K.accordato ? `<div class="sub">castelletti: utilizzati ${eur(K.utilizzoAcc)} su ${eur(K.accordato)} accordati · disponibili ${eur(K.disponibile)}</div>` : ''; })()}${D.saldi[0] && D.saldi[0].accordato_anticipi ? `<div class="sub">Ultimo saldo dal portale ${esc(D.saldi[0].banca)} ${fmtD(D.saldi[0].data)}: anticipi ${eur(D.saldi[0].anticipi_utilizzati)} su accordato ${eur(D.saldi[0].accordato_anticipi)}</div>` : ''}</div>
-    <div class="card"><h3>${link('PFN bancaria', 'banche')}</h3><div class="kpi">${eur(pos.pfnStima)}</div><div class="sub">finanziamenti ${eur(pos.fin)} + anticipi ${eur(s.anticipi)} + scoperti ${eur(s.scoperti)} − liquidità ${eur(s.liquidita)}${pos.diversa ? ` · contabile ${eur(pos.pfn)}` : ''}</div><div class="sub">con finanziamento soci (${eur(pos.soci)}): <b>${eur(pos.pfnTotStima)}</b></div></div>
+    <div class="card kclk2" onclick="UI.go('banche','scoperti')"><h3>${link('Scoperti e anticipi', 'banche', 'scoperti')}</h3><div class="kpi">${eur(s.scoperti + s.anticipi)}</div><div class="sub">scoperti di c/c ${eur(s.scoperti)}${Math.abs(s.scoperti - pos.c.scoperti) > 0.5 ? ` (contabile ${eur(pos.c.scoperti)})` : ''} · anticipi ${link(eur(s.anticipi), 'banche', 'anticipi')}</div>${(() => { const K = castelletti(pos); return K.accordato ? `<div class="sub">castelletti: utilizzati ${eur(K.utilizzoAcc)} su ${eur(K.accordato)} accordati · disponibili ${eur(K.disponibile)}</div>` : ''; })()}${D.saldi[0] && D.saldi[0].accordato_anticipi ? `<div class="sub">Ultimo saldo dal portale ${esc(D.saldi[0].banca)} ${fmtD(D.saldi[0].data)}: anticipi ${eur(D.saldi[0].anticipi_utilizzati)} su accordato ${eur(D.saldi[0].accordato_anticipi)}</div>` : ''}</div>
+    <div class="card kclk2" onclick="UI.go('banche')"><h3>${link('PFN bancaria', 'banche')}</h3><div class="kpi">${eur(pos.pfnStima)}</div><div class="sub">finanziamenti ${eur(pos.fin)} (capitale, senza interessi) + anticipi ${eur(s.anticipi)} + scoperti ${eur(s.scoperti)} − liquidità ${eur(s.liquidita)}${pos.diversa ? ` · contabile ${eur(pos.pfn)}` : ''}</div><div class="sub">con finanziamento soci (${eur(pos.soci)}): <b>${eur(pos.pfnTotStima)}</b></div></div>
     <div class="card"><h3>Scaduto</h3>
-      <div class="kpi sm">${link('clienti', 'partite', 'incassi:scaduto')} <span class="${scadutoC > 0 ? 'warn' : ''}">${eur(scadutoC)}</span></div><div class="sub">${scadC.length} partite oltre la data attesa${aperturaC ? ` · di cui saldi 2025 ${eur(aperturaC)}` : ''}</div>
-      <div class="kpi sm" style="margin-top:8px">${link('fornitori', 'partite', 'pagamenti:scaduto')} <span class="${scadutoF > 0 ? 'bad' : ''}">${eur(scadutoF)}</span></div><div class="sub">${scadF.length} partite scadute, fuori dai piani di rientro</div>
+      <div class="kclk" onclick="UI.go('partite','incassi:scaduto')"><div class="kpi sm">${link('clienti', 'partite', 'incassi:scaduto')} <span class="${scadutoC > 0 ? 'warn' : ''}">${eur(scadutoC)}</span></div><div class="sub">${scadC.length} partite oltre la data attesa${aperturaC ? ` · di cui saldi 2025 ${eur(aperturaC)}` : ''}</div></div>
+      <div class="kclk" style="margin-top:8px" onclick="UI.go('partite','pagamenti:scaduto')"><div class="kpi sm">${link('fornitori', 'partite', 'pagamenti:scaduto')} <span class="${scadutoF > 0 ? 'bad' : ''}">${eur(scadutoF)}</span></div><div class="sub">${scadF.length} partite scadute, fuori dai piani di rientro</div></div>
       ${pf.length ? `<div class="sub">${link('piani di rientro', 'partite', 'pagamenti:piani')}: ${pf.map(x => esc(x.nome) + ' ' + eur(x.residuo)).join(' · ')}</div>` : ''}
       ${inBanca.length ? `<div class="sub">${link(inBanca.length + ' pagamenti e incassi', 'partite', 'banca')} già passati in banca, da registrare in NTS: non contati</div>` : ''}</div>
   </div>
   <div class="card"><h3>Prossimi 30 giorni (fino al ${fmtD(fine)})</h3>
-    <div class="row4" style="margin-bottom:12px">${kpiBox('Uscite', '− ' + eur(usciteRate + usciteForn), `rate, F24 e piani ${eur(usciteRate)} · ${link('fornitori in scadenza', 'partite', 'pagamenti:prossime')} ${eur(usciteForn)}`, 'bad')}${kpiBox('Incassi attesi', '+ ' + eur(incassi), `${link('fatture ai clienti', 'partite', 'incassi:prossime')} (${cli30.length})`, 'good')}${kpiBox('Proforme da incassare', '+ ' + eur(incProf), `${link(prof.length + ' proforme', 'partite', 'incassi:proforme')}, ordini non ancora fatturati${profTutte.length > prof.length ? ` · altre ${profTutte.length - prof.length} dopo i 30 giorni (clienti che pagano dopo la consegna)` : ''}`, 'good')}${kpiBox('Saldo netto dei conti a fine periodo', eur(nettoFine), `liquidità − scoperti di c/c (oggi ${eur(netto)}), senza proforme, stipendi, F24 e spese correnti`, nettoFine < 0 ? 'warn' : '')}</div>
+    <div class="row4" style="margin-bottom:12px">${kpiBox('Uscite', '− ' + eur(usciteRate + usciteForn), `${link('rate, F24 e piani', 'scadenziario', 'prossime')} ${eur(usciteRate)} · ${link('fornitori in scadenza', 'partite', 'pagamenti:prossime')} ${eur(usciteForn)}`, 'bad', "UI.go('partite','pagamenti:prossime')")}${kpiBox('Incassi attesi', '+ ' + eur(incassi), `${link('fatture ai clienti', 'partite', 'incassi:prossime')} (${cli30.length})`, 'good', "UI.go('partite','incassi:prossime')")}${kpiBox('Proforme da incassare', '+ ' + eur(incProf), `${link(prof.length + ' proforme', 'partite', 'incassi:proforme')}, ordini non ancora fatturati${profTutte.length > prof.length ? ` · altre ${profTutte.length - prof.length} dopo i 30 giorni (clienti che pagano dopo la consegna)` : ''}`, 'good', "UI.go('partite','incassi:proforme')")}${kpiBox('Saldo netto dei conti a fine periodo', eur(nettoFine), `liquidità − scoperti di c/c (oggi ${eur(netto)}), senza proforme, stipendi, F24 e spese correnti`, nettoFine < 0 ? 'warn' : '')}</div>
     ${elenco ? `<div class="evl">${elenco}</div><div class="small muted" style="margin-top:6px">Le date con più movimenti si aprono con un clic.</div>` : '<div class="muted">Nessuna scadenza nei prossimi 30 giorni.</div>'}</div>
-  <div class="card"><h3>Rateizzazioni AdER</h3>${ader.length ? `<ul class="list">${ader.map(({ p, s }) => `<li><div><b>${esc(p.nome)}</b><div class="d">${s.pagate}/${s.tot} pagate · contatore <b>${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="warn">${s.daConf} scadute da confermare</span>` : ''}) · residuo ${eur(s.residuo)} · prossima ${s.prossima ? fmtD(s.prossima.scadenza) + ' ' + eur2(s.prossima.importo) : '–'}</div><div class="bar"><i class="${s.margine <= 1 ? 'bad' : s.margine <= 3 ? 'warn' : 'good'}" style="width:${Math.min(100, 100 * s.contatore / s.soglia)}%"></i></div></div><div class="right">${s.margine <= 1 ? '<span class="pill bad">decadenza vicina</span>' : s.margine <= 3 ? '<span class="pill warn">attenzione</span>' : '<span class="pill good">regolare</span>'}</div></li>`).join('')}</ul>` : '<div class="muted">Nessun piano AdER attivo.</div>'}<div class="small muted" style="margin-top:8px">Contatore = rate saltate + rate scadute non ancora confermate, come nel cruscotto storico: una rata scaduta conta finché non viene segnata pagata. Residuo = tutte le rate non pagate, saltate comprese.</div></div>
+  <div class="card"><h3>Rateizzazioni AdER</h3>${ader.length ? `<ul class="list">${ader.map(({ p, s }) => `<li class="${s.rosso ? 'zr' : ''}" style="${s.rosso ? 'padding:10px 12px;border-radius:8px;margin-bottom:6px' : ''}"><div><b style="${s.rosso ? 'font-size:1.15em;color:var(--bad)' : ''}">${esc(p.nome)}</b><div class="d" style="${s.rosso ? 'font-size:14px' : ''}">${s.pagate}/${s.tot} pagate · contatore <b class="${s.rosso ? 'zr-n' : ''}">${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="${s.rosso ? 'bad' : 'warn'}">${s.daConf} scadute da confermare</span>` : ''}) · scaduto ${eur(s.scadutoImporto)} · residuo ${eur(s.residuo)} · prossima ${s.prossima ? fmtD(s.prossima.scadenza) + ' ' + eur2(s.prossima.importo) : '–'}</div><div class="bar"><i class="${s.rosso ? 'bad' : s.margine <= 3 ? 'warn' : 'good'}" style="width:${Math.min(100, 100 * s.contatore / s.soglia)}%"></i></div></div><div class="right">${s.rosso ? `<span class="pill bad" title="Da ${s.zonaRossa} rate scadute su ${s.soglia} il piano è in zona rossa: all'ottava il piano decade automaticamente. Pagare con priorità.">ZONA ROSSA${s.margine > 0 ? ' · ' + s.margine + (s.margine === 1 ? ' rata alla decadenza' : ' rate alla decadenza') : ''}</span>` : s.margine <= 3 ? '<span class="pill warn">attenzione</span>' : '<span class="pill good">regolare</span>'}</div></li>`).join('')}</ul>` : '<div class="muted">Nessun piano AdER attivo.</div>'}<div class="small muted" style="margin-top:8px">Contatore = rate saltate + rate scadute non ancora confermate, come nel cruscotto storico: una rata scaduta conta finché non viene segnata pagata. Residuo = tutte le rate non pagate, saltate comprese.</div></div>
   </div>`;
 }
 
@@ -533,7 +733,7 @@ function pagePartite() {
     const pc = partiteC();
     const scad = pc.filter(s => s.attesa < OGGI), pros = pc.filter(s => s.attesa >= OGGI && s.attesa <= fine), oltre = pc.filter(s => s.attesa > fine);
     const prof = proformeAttese(), perStato = k => D.proforme.filter(p => p.stato === k), verifica = perStato('verifica'), pagate = perStato('pagata'), fatturate = perStato('fatturata'), doppie = perStato('doppia'), daSped = perStato('attesa'), daFatt = perStato('da_fatturare');
-    const inBanca = D.scad.filter(s => s.tipo_cf === 'C' && s.banca_pag);
+    const inBanca = scadX().filter(s => s.tipo_cf === 'C' && s.banca_pag);
     const tot = sum(pc, s => s.importo) + sum(prof, p => p.totdoc), sal25 = sum(scad.filter(s => s.apertura), s => s.importo);
     let rows = T.filtro === 'scaduto' ? scad : T.filtro === 'prossime' ? pros : T.filtro === 'oltre' ? oltre : T.filtro === 'proforme' ? [] : pc;
     rows = cerca(rows);
@@ -541,9 +741,9 @@ function pagePartite() {
     const pff = PF_FILTRI.some(f => f[0] === T.pfFiltro) ? T.pfFiltro : 'aperte';
     const pfStati = { aperte: ['attesa', 'da_fatturare', 'fatturata', 'verifica'], incassare: ['attesa', 'da_fatturare'], pagata: ['pagata'], verifica: ['verifica'], chiuse: ['chiusa', 'doppia', 'incassata', 'annullata'], tutte: null }[pff];
     const pfRows = cerca(D.proforme.filter(p => !pfStati || pfStati.includes(p.stato)));
-    body = `<div class="card" style="margin-bottom:12px"><div class="row5">${kpiBox('Fatture oltre la data attesa', eur(sum(scad, s => s.importo)), `${scad.length} partite${sal25 ? ` · di cui saldi 2025 ${eur(sal25)}` : ''}`, 'warn')}${kpiBox('Fatture attese entro 30 giorni', eur(sum(pros, s => s.importo)), pros.length + ' partite')}${kpiBox('Fatture attese oltre 30 giorni', eur(sum(oltre, s => s.importo)), oltre.length + ' partite')}${kpiBox('Proforme da incassare', eur(sum(prof, p => p.totdoc)), `${daSped.length} da spedire${daFatt.length ? ' · ' + daFatt.length + ' spedite, da fatturare' : ''}`)}${kpiBox('Totale da incassare', eur(tot), 'fatture + proforme', 'good')}</div>
+    body = `<div class="card" style="margin-bottom:12px"><div class="row5">${kpiBox('Fatture oltre la data attesa', eur(sum(scad, s => s.importo)), `${scad.length} partite${sal25 ? ` · di cui saldi 2025 ${eur(sal25)}` : ''}`, 'warn', "UI.partite(null,'scaduto')")}${kpiBox('Fatture attese entro 30 giorni', eur(sum(pros, s => s.importo)), pros.length + ' partite', '', "UI.partite(null,'prossime')")}${kpiBox('Fatture attese oltre 30 giorni', eur(sum(oltre, s => s.importo)), oltre.length + ' partite', '', "UI.partite(null,'oltre')")}${kpiBox('Proforme da incassare', eur(sum(prof, p => p.totdoc)), `${daSped.length} da spedire${daFatt.length ? ' · ' + daFatt.length + ' spedite, da fatturare' : ''}`, '', "UI.partite(null,'proforme')")}${kpiBox('Totale da incassare', eur(tot), 'fatture + proforme', 'good', "UI.partite(null,'tutto')")}</div>
       <div class="small muted" style="margin-top:8px">Non conteggiati: ${inBanca.length} incassi già arrivati in banca e da registrare in NTS (${eur(sum(inBanca, s => s.importo))}, ${link('vedi', 'partite', 'banca')}) · ${fatturate.length} proforme già fatturate (${eur(sum(fatturate, p => p.totdoc))}, il credito è già nelle fatture) · ${pagate.length} pagate e da spedire (${eur(sum(pagate, p => p.totdoc))}) · ${verifica.length} da verificare (${eur(sum(verifica, p => p.totdoc))}) · ${doppie.length} doppie</div></div>
-      ${filtriHtml(filtri)}${cercaHtml('cerca cliente o numero')}
+      ${dilazioniCard(true)}${filtriHtml(filtri)}${cercaHtml('cerca cliente o numero')}
       ${T.filtro !== 'proforme' ? `<h3 style="margin:14px 0 8px">Fatture · ${rows.length} partite · ${eur(sum(rows, s => s.importo))}</h3><div class="small muted" style="margin-bottom:8px">La «data attesa» è la scadenza NTS, oppure quella della regola del cliente (es. NordicFire: fattura + 10 giorni). Con «Incassato» la partita esce subito dagli importi da incassare.</div>${gruppiPartite(rows, true)}` : ''}
       ${T.filtro === 'tutto' || T.filtro === 'proforme' ? `<h3 style="margin:18px 0 8px">Proforme · ${pfRows.length}</h3><div class="small muted" style="margin-bottom:8px">In Magikal la proforma non genera nulla in NTS: Fiammetta la collega all'ordine del cliente (stesso cliente, importo e data più vicini) e da lì alla bolla, alla fattura e all'incasso. Conta come «da incassare» finché la merce non è fatturata (da quel momento il credito è nelle fatture qui sopra) e finché non si vede il bonifico, in NTS o in banca.</div><div class="tabs">${PF_FILTRI.map(([k, l]) => `<button class="${pff === k ? 'on' : ''}" onclick="UI.pfFiltro('${k}')">${l}</button>`).join('')}</div>${tabellaProforme(pfRows)}` : ''}`;
   } else if (T.tab === 'pagamenti') {
@@ -551,38 +751,52 @@ function pagePartite() {
     if (!filtri.some(f => f[0] === T.filtro)) T.filtro = 'tutto';
     const df = debitiF().filter(s => !s.piano);
     const scad = df.filter(s => s.datsca < OGGI), pros = df.filter(s => s.datsca >= OGGI && s.datsca <= fine), oltre = df.filter(s => s.datsca > fine);
-    const dare = partiteF().filter(s => s.importo > 0 && !s.piano), inBanca = D.scad.filter(s => s.tipo_cf === 'F' && s.banca_pag), pf = pianiFornitori();
+    const dare = partiteF().filter(s => s.importo > 0 && !s.piano), inBanca = scadX().filter(s => s.tipo_cf === 'F' && s.banca_pag), pf = pianiFornitori();
     let rows = T.filtro === 'scaduto' ? scad : T.filtro === 'prossime' ? pros : T.filtro === 'oltre' ? oltre : T.filtro === 'piani' ? [] : df;
     rows = cerca(rows);
     const piani = pf.map(x => { const st = x.piani.map(p => ({ p, s: statoAder(p) })); const prossima = st.map(y => y.s.prossima).filter(Boolean).sort((a, b) => a.scadenza.localeCompare(b.scadenza))[0];
       return `<details class="piano" open><summary><span class="nm">${esc(x.nome)}<div class="small muted">${st.map(({ p, s }) => `${esc(p.nome)}: ${s.pagate}/${s.tot} rate pagate`).join(' · ')}</div></span><span class="small nowrap">prossima ${prossima ? fmtD(prossima.scadenza) + ' ' + eur(prossima.importo) : '–'}</span><span class="nowrap right">residuo piano <b>${eur(x.residuo)}</b></span></summary>
         <div class="body"><div class="small muted" style="margin-bottom:6px">Il debito si paga con le rate dello ${link('Scadenziario', 'scadenziario', 'piani')}. In NTS restano aperte ${x.partite.length} partite (saldo ${eur2(-sum(x.partite, s => s.importo))}): non contano nello scaduto.</div>${x.partite.length ? tabellaPartite(x.partite, false) : ''}</div></details>`; }).join('');
-    body = `<div class="card" style="margin-bottom:12px"><div class="row5">${kpiBox('Scadute', eur(-sum(scad, s => s.importo)), scad.length + ' partite fuori dai piani', 'bad')}${kpiBox('In scadenza entro 30 giorni', eur(-sum(pros, s => s.importo)), pros.length + ' partite')}${kpiBox('Oltre 30 giorni', eur(-sum(oltre, s => s.importo)), oltre.length + ' partite')}${kpiBox('Totale fornitori da pagare', eur(-sum(df, s => s.importo)), 'importi lordi, fuori dai piani')}${kpiBox('Piani di rientro', eur(sum(pf, x => x.residuo)), pf.map(x => esc(x.nome)).join(' · ') || 'nessuno')}</div>
+    body = `<div class="card" style="margin-bottom:12px"><div class="row5">${kpiBox('Scadute', eur(-sum(scad, s => s.importo)), scad.length + ' partite fuori dai piani', 'bad', "UI.partite(null,'scaduto')")}${kpiBox('In scadenza entro 30 giorni', eur(-sum(pros, s => s.importo)), pros.length + ' partite', '', "UI.partite(null,'prossime')")}${kpiBox('Oltre 30 giorni', eur(-sum(oltre, s => s.importo)), oltre.length + ' partite', '', "UI.partite(null,'oltre')")}${kpiBox('Totale fornitori da pagare', eur(-sum(df, s => s.importo)), 'importi lordi, fuori dai piani', '', "UI.partite(null,'tutto')")}${kpiBox('Piani di rientro', eur(sum(pf, x => x.residuo)), pf.map(x => esc(x.nome)).join(' · ') || 'nessuno', '', "UI.partite(null,'piani')")}</div>
       <div class="small muted" style="margin-top:8px">Non conteggiati: ${inBanca.length} pagamenti già usciti dalla banca e da registrare in NTS (${eur(-sum(inBanca, s => s.importo))}, ${link('vedi', 'partite', 'banca')}) · ${dare.length} partite in dare (acconti, note di credito o scritture da sistemare, ${eur(sum(dare, s => s.importo))}).</div></div>
-      ${filtriHtml(filtri)}${T.filtro !== 'piani' ? cercaHtml('cerca fornitore o numero fattura') : ''}
+      ${dilazioniCard(false)}${filtriHtml(filtri)}${T.filtro !== 'piani' ? cercaHtml('cerca fornitore o numero fattura') : ''}
       ${T.filtro !== 'piani' ? `<h3 style="margin:14px 0 8px">Fatture da pagare · ${rows.length} partite · ${eur(-sum(rows, s => s.importo))}</h3>${gruppiPartite(rows, false)}` : ''}
       ${T.filtro === 'tutto' || T.filtro === 'piani' ? `<h3 style="margin:18px 0 8px">Piani di rientro</h3>${piani || '<div class="card muted">Nessun piano di rientro attivo.</div>'}` : ''}
       ${T.filtro === 'tutto' && dare.length ? `<details class="piano" style="margin-top:14px"><summary><span class="nm">Partite in dare (non conteggiate)<div class="small muted">acconti, note di credito, pagamenti da abbinare o scritture da sistemare in NTS</div></span><span class="small nowrap">${dare.length} partite</span><span class="nowrap right"><b>${eur2(sum(dare, s => s.importo))}</b></span></summary><div class="body">${tabellaPartite(cerca(dare), false)}</div></details>` : ''}`;
   } else if (T.tab === 'banca') {
-    let rows = D.nuovi || [];
+    const filtriB = [['tutto', 'Tutti'], ['accrediti', 'Accrediti'], ['addebiti', 'Addebiti'], ['riconosciuti', 'Riconosciuti'], ['altri', 'Non riconosciuti']];
+    if (!filtriB.some(f => f[0] === T.filtro)) T.filtro = 'tutto';
+    let rows = (D.nuovi || []).filter(m => T.filtro === 'accrediti' ? m.accredito > 0 : T.filtro === 'addebiti' ? m.addebito > 0 : T.filtro === 'riconosciuti' ? m.abb : T.filtro === 'altri' ? !m.abb : true);
     if (q) rows = rows.filter(m => ((m.descr1 || '') + ' ' + (m.descr2 || '') + ' ' + (m.abb ? m.abb.nome : '')).toLowerCase().includes(q));
     const tutti = D.nuovi || [], abb = tutti.filter(m => m.abb);
-    body = `<div class="card" style="margin-bottom:12px"><div class="row4">${kpiBox('Movimenti da registrare', String(tutti.length), 'importati in NTS dopo l\'ultima registrazione di ogni banca')}${kpiBox('Accrediti', '+ ' + eur(sum(tutti, m => m.accredito)), tutti.filter(m => m.accredito > 0).length + ' movimenti', 'good')}${kpiBox('Addebiti', '− ' + eur(sum(tutti, m => m.addebito)), tutti.filter(m => m.addebito > 0).length + ' movimenti', 'bad')}${kpiBox('Riconosciuti', String(abb.length), 'abbinati a fatture o proforme per importo')}</div>
+    body = `<div class="card" style="margin-bottom:12px"><div class="row4">${kpiBox('Movimenti da registrare', String(tutti.length), 'importati in NTS dopo l\'ultima registrazione di ogni banca', '', "UI.partite(null,'tutto')")}${kpiBox('Accrediti', '+ ' + eur(sum(tutti, m => m.accredito)), tutti.filter(m => m.accredito > 0).length + ' movimenti', 'good', "UI.partite(null,'accrediti')")}${kpiBox('Addebiti', '− ' + eur(sum(tutti, m => m.addebito)), tutti.filter(m => m.addebito > 0).length + ' movimenti', 'bad', "UI.partite(null,'addebiti')")}${kpiBox('Riconosciuti', String(abb.length), 'abbinati a fatture, proforme o incassi segnati per importo', '', "UI.partite(null,'riconosciuti')")}</div>
       <div class="small muted" style="margin-top:8px">Questi movimenti sono già nella liquidità stimata. Quelli riconosciuti chiudono la partita in Fiammetta finché Miriam non li registra in NTS; gli altri (stipendi, F24, commissioni, giroconti…) restano solo nella liquidità.</div></div>
-      ${cercaHtml('cerca nella descrizione o nel nome')}
+      ${filtriHtml(filtriB)}${cercaHtml('cerca nella descrizione o nel nome')}
       <div class="card"><div class="scroll"><table class="resp"><tr><th>Data</th><th>Banca</th><th class="num">Importo</th><th>Descrizione</th><th>Riconosciuto come</th></tr>${rows.map(m => `<tr><td class="nowrap">${fmtD(m.dataoperaz)}</td><td class="small">${esc(nomeBanca(m.banca))}</td><td class="num ${m.accredito > 0 ? 'good' : 'bad'}">${m.accredito > 0 ? '+ ' + eur2(m.accredito) : '− ' + eur2(m.addebito)}</td><td class="small full">${esc(m.descr1 || '')} <span class="muted">${esc(m.descr2 || '')}</span></td><td class="small">${m.abb ? `<span class="pill good">${esc(m.abb.tipo)}</span> ${esc(m.abb.nome || '')} <span class="muted">${esc(m.abb.rif || '')}</span>` : '<span class="muted">–</span>'}</td></tr>`).join('')}</table></div>${rows.length ? '' : '<div class="muted">Nessun movimento dopo l\'ultima registrazione.</div>'}</div>`;
   } else {
     const rows = D.movimenti.filter(m => m.stato === 'attesa');
-    body = `<div class="small muted" style="margin-bottom:8px">Incassi e pagamenti segnati a mano in Fiammetta che NTS non ha ancora registrato. Spariscono da soli quando la partita viene chiusa in prima nota.</div>
-    <div class="card"><div class="scroll"><table class="resp"><tr><th>Data</th><th>Tipo</th><th>Controparte</th><th>Riferimento</th><th class="num">Importo</th><th>Banca</th><th></th></tr>${rows.map(m => `<tr><td class="nowrap">${fmtD(m.data)}</td><td>${m.tipo === 'incasso' ? '<span class="pill good">incasso</span>' : '<span class="pill bad">pagamento</span>'}</td><td>${esc(m.controparte || m.conto || '')}</td><td class="small muted">${m.chiave_partita ? 'partita ' + esc(m.chiave_partita.split('|').slice(1, 4).join('/')) : m.chiave_doc ? 'proforma ' + esc(m.chiave_doc.split('|').pop()) : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</td><td class="num">${eur2(m.importo)}</td><td class="small">${esc(m.banca || '')}<span class="d2">segnato da ${esc(m.creato_da || '')} il ${fmtD(m.creato_il)}</span></td><td class="right">${puoElim() ? `<button class="btn sm ghost" onclick="UI.chiediAnnullaMovimento(${m.id})">annulla</button>` : ''}</td></tr>`).join('')}</table></div>${rows.length ? '' : '<div class="muted">Niente in attesa.</div>'}</div>`;
+    body = `<div class="small muted" style="margin-bottom:8px">Incassi e pagamenti segnati a mano in Fiammetta che NTS non ha ancora registrato. Spariscono da soli quando la partita viene chiusa in prima nota. Se la banca ha già importato lo stesso movimento (stesso importo, banca e date vicine) compare «già in banca»: nella liquidità conta una volta sola.</div>
+    <div class="card"><div class="scroll"><table class="resp"><tr><th>Data</th><th>Tipo</th><th>Controparte</th><th>Riferimento</th><th class="num">Importo</th><th>Banca</th><th></th></tr>${rows.map(m => `<tr><td class="nowrap">${fmtD(m.data)}</td><td>${m.tipo === 'incasso' ? '<span class="pill good">incasso</span>' : '<span class="pill bad">pagamento</span>'}</td><td>${esc(m.controparte || m.conto || '')}</td><td class="small muted">${m.inBanca ? `<span class="pill good" title="La banca ha già importato questo movimento (stesso importo, banca e data vicina): è nella liquidità una volta sola, il segnato a mano non si somma">già in banca ${fmtD(m.inBanca.dataoperaz)}</span> ` : ''}${m.chiave_partita ? 'partita ' + esc(m.chiave_partita.split('|').slice(1, 4).join('/')) : m.chiave_doc ? 'proforma ' + esc(m.chiave_doc.split('|').pop()) : ''}${m.nota ? ' · ' + esc(m.nota) : ''}</td><td class="num">${eur2(m.importo)}</td><td class="small">${esc(m.banca || '')}<span class="d2">segnato da ${esc(m.creato_da || '')} il ${fmtD(m.creato_il)}</span></td><td class="right">${puoElim() ? `<button class="btn sm ghost" onclick="UI.chiediAnnullaMovimento(${m.id})">annulla</button>` : ''}</td></tr>`).join('')}</table></div>${rows.length ? '' : '<div class="muted">Niente in attesa.</div>'}</div>`;
   }
   return `<div class="head"><h2>Crediti e debiti</h2><span class="small muted">partite aperte in NTS al ${fmtD(D.stato.ultima_registrazione)} · movimenti banca fino al ${fmtD(posizione().ultimoMov)}</span></div>
   <div class="tabs" style="margin-bottom:10px">${tabs.map(([k, l]) => `<button class="${T.tab === k ? 'on' : ''}" style="${T.tab === k ? '' : 'border-color:#cfc5b8'}" onclick="UI.partite('${k}')">${l}</button>`).join('')}</div>${body}`;
 }
+// Elenco delle dilazioni concordate con lo stato di ogni rata (la rata «pagata» è quella che il residuo NTS non copre più)
+function dilazioniCard(cli) {
+  const lista = S.data.scad.filter(s => s.dil && s.tipo_cf === (cli ? 'C' : 'F'));
+  if (!lista.length) return '';
+  const tot = sum(lista, s => s.dil.righe.reduce((a, r) => a + Math.abs(r.importo), 0));
+  const pillRata = (s, t) => { const r = s.dil.righe.find(x => x.tr.n === t.n);
+    if (t.aperto <= 0.004) return '<span class="pill good">' + (cli ? 'incassata' : 'pagata') + '</span>';
+    if (r && r.banca_pag) return '<span class="pill good" title="Il movimento è già nel file della banca, da registrare in NTS">visto in banca</span>';
+    return t.data < OGGI ? `<span class="pill bad">scaduta da ${giorni(t.data, OGGI)} gg</span>` : '<span class="pill plain">' + (cli ? 'da incassare' : 'da pagare') + '</span>'; };
+  return `<details class="piano" style="margin-bottom:12px" ${lista.length <= 4 ? 'open' : ''}><summary><span class="nm">Dilazioni concordate<div class="small muted">al posto della scadenza originale valgono le date delle rate</div></span><span class="small nowrap">${lista.length} ${lista.length === 1 ? 'partita' : 'partite'}</span><span class="nowrap right">ancora aperto <b>${eur2(tot)}</b></span></summary><div class="body"><div class="scroll"><table class="resp"><tr><th>${cli ? 'Cliente' : 'Fornitore'}</th><th>Documento</th><th>Rate concordate</th><th class="num">Residuo</th><th></th></tr>
+  ${lista.map(s => `<tr><td>${esc(s.controparte || s.conto)}</td><td class="small">${s.apertura ? 'saldo 2025' : 'ft ' + esc(String(s.numdoc || '')) + ' del ' + fmtD(s.datdoc)}<span class="d2">scadenza originale ${fmtD(s.datsca)}</span></td><td class="small">${s.dil.tr.map(t => `<div class="nowrap">${t.n}ª · ${fmtD(t.data)} · ${eur2(t.importo)} ${pillRata(s, t)}</div>`).join('')}${s.dil.extra > 0.004 ? `<div class="warn">quota non pianificata ${eur2(s.dil.extra)}: resta con la scadenza originale</div>` : ''}${s.dil.d.nota ? `<div class="muted">${esc(s.dil.d.nota)}</div>` : ''}</td><td class="num">${eur2(s.dil.righe.reduce((a, r) => a + Math.abs(r.importo), 0))}<span class="d2">in NTS ${eur2(s.dil.residuoNTS)}${s.dil.pendTot > 0.004 ? ' · segnati a mano ' + eur2(s.dil.pendTot) : ''}</span></td><td class="right"><button class="btn sm" onclick="UI.modal('dilazione','${s.chiave}')">modifica</button></td></tr>`).join('')}</table></div></div></details>`;
+}
 function tabellaPartite(rows, cli) {
   rows = rows.slice().sort((a, b) => (cli ? a.attesa : a.datsca).localeCompare(cli ? b.attesa : b.datsca));
   return `<div class="scroll"><table class="resp"><tr><th>Documento</th><th>Scadenza NTS</th>${cli ? '<th>Attesa</th>' : ''}<th>Ritardo</th><th class="num">Importo</th><th>Pagamento e banca</th><th></th></tr>
-  ${rows.map(s => { const rit = cli ? s.ritardo : giorni(s.datsca, OGGI); const d = cli ? s.attesa : s.datsca; return `<tr><td>${s.daAbbinare ? `<span class="pill warn" title="In NTS il ${cli ? 'pagamento del cliente' : 'pagamento al fornitore'} è registrato ma non abbinato alla fattura: va abbinato in prima nota">${cli ? 'incasso' : 'pagamento'} da abbinare</span>` : s.apertura ? '<span class="pill plain">saldo 2025</span>' : (s.numdoc ? '<span class="nowrap">ft ' + esc(String(s.numdoc)) + (s.alfdoc && s.alfdoc !== '00' ? '/' + esc(s.alfdoc) : '') + '</span> <span class="nowrap">del ' + fmtD(s.datdoc) + '</span>' : '–')}${s.insolu === 'S' ? ' <span class="pill bad">insoluto</span>' : ''}${s.flant === 'S' ? ' <span class="pill plain">anticipata</span>' : ''}${s.piano ? ' <span class="pill plain">piano ' + esc(s.piano.nome) + '</span>' : ''}${s.accontoDa ? ` <span class="pill good" title="In NTS c'è un acconto o un incasso dello stesso importo non abbinato alla fattura: la fattura è già pagata, va solo abbinata in prima nota">pagata con acconto del ${fmtD(s.accontoDa.datdoc || s.accontoDa.datsca)}</span>` : ''}${s.accontoPer ? ` <span class="small muted nowrap">per ft ${esc(String(s.accontoPer.numdoc))}</span>` : ''}</td><td class="nowrap">${fmtD(s.datsca)}</td>${cli ? `<td class="nowrap ${s.attesa !== s.datsca ? 'muted' : ''}">${fmtD(s.attesa)}</td>` : ''}<td class="nowrap ${rit > 0 && d < OGGI ? (rit > 60 ? 'bad' : 'warn') : 'muted'}">${d < OGGI ? rit + ' gg' : 'tra ' + (-rit) + ' gg'}</td><td class="num ${s.importo < 0 ? 'muted' : ''}">${eur2(cli ? s.importo : -s.importo)}</td><td class="small">${esc(s.pagamento || '')}${s.banca ? `<span class="d2">${esc(nomeBanca(s.banca) === 'Altro' ? s.banca : nomeBanca(s.banca))}</span>` : ''}</td><td class="right">${s.accontoDa || s.accontoPer ? '<span class="small muted">compensate</span>' : `<button class="btn sm ${cli ? 'primary' : ''}" onclick="UI.modal('incasso','pt:${s.chiave}')">${cli ? 'Incassato' : 'Pagato'}</button>`}</td></tr>`; }).join('')}</table></div>`;
+  ${rows.map(s => { const rit = cli ? s.ritardo : giorni(s.datsca, OGGI); const d = cli ? s.attesa : s.datsca; return `<tr><td>${s.daAbbinare ? `<span class="pill warn" title="In NTS il ${cli ? 'pagamento del cliente' : 'pagamento al fornitore'} è registrato ma non abbinato alla fattura: va abbinato in prima nota">${cli ? 'incasso' : 'pagamento'} da abbinare</span>` : s.apertura ? '<span class="pill plain">saldo 2025</span>' : (s.numdoc ? '<span class="nowrap">ft ' + esc(String(s.numdoc)) + (s.alfdoc && s.alfdoc !== '00' ? '/' + esc(s.alfdoc) : '') + '</span> <span class="nowrap">del ' + fmtD(s.datdoc) + '</span>' : '–')}${s.insolu === 'S' ? ' <span class="pill bad">insoluto</span>' : ''}${s.flant === 'S' ? ' <span class="pill plain">anticipata</span>' : ''}${s.piano ? ' <span class="pill plain">piano ' + esc(s.piano.nome) + '</span>' : ''}${s.tr ? ` <span class="pill warn" title="Dilazione concordata: al posto della scadenza NTS valgono le date delle rate. Si modifica con il pulsante «dilazione».">${s.tr.n ? 'dilazione · rata ' + s.tr.n + '/' + s.tr.tot : 'dilazione · quota non pianificata'}</span>` : ''}${s.accontoDa ? ` <span class="pill good" title="In NTS c'è un acconto o un incasso dello stesso importo non abbinato alla fattura: la fattura è già pagata, va solo abbinata in prima nota">pagata con acconto del ${fmtD(s.accontoDa.datdoc || s.accontoDa.datsca)}</span>` : ''}${s.accontoPer ? ` <span class="small muted nowrap">per ft ${esc(String(s.accontoPer.numdoc))}</span>` : ''}</td><td class="nowrap">${fmtD(s.datscaNTS || s.datsca)}${s.tr ? `<span class="d2">rata del ${fmtD(s.datsca)}${s.tr.n && Math.abs(s.tr.importoRata - Math.abs(s.importo)) > 0.5 ? ' · di ' + eur2(s.tr.importoRata) : ''}</span>` : ''}</td>${cli ? `<td class="nowrap ${s.attesa !== s.datsca ? 'muted' : ''}">${fmtD(s.attesa)}</td>` : ''}<td class="nowrap ${rit > 0 && d < OGGI ? (rit > 60 ? 'bad' : 'warn') : 'muted'}">${d < OGGI ? rit + ' gg' : 'tra ' + (-rit) + ' gg'}</td><td class="num ${s.importo < 0 ? 'muted' : ''}">${eur2(cli ? s.importo : -s.importo)}</td><td class="small">${esc(s.pagamento || '')}${s.banca ? `<span class="d2">${esc(nomeBanca(s.banca) === 'Altro' ? s.banca : nomeBanca(s.banca))}</span>` : ''}</td><td class="right">${s.accontoDa || s.accontoPer ? '<span class="small muted">compensate</span>' : `<button class="btn sm ${cli ? 'primary' : ''}" onclick="UI.modal('incasso','${s.tr ? 'tr:' + s.tr.n + ':' : 'pt:'}${s.chiave}')">${cli ? 'Incassato' : 'Pagato'}</button>${s.piano || s.daAbbinare ? '' : ` <button class="btn sm ghost" onclick="UI.modal('dilazione','${s.chiave}')" title="${s.tr ? 'Modifica o annulla la dilazione concordata' : 'Registra una dilazione concordata con ' + (cli ? 'il cliente' : 'il fornitore') + ': rate con date e importi diversi dalla scadenza originale'}">${s.tr ? 'dilazione' : 'dilaziona'}</button>`}`}</td></tr>`; }).join('')}</table></div>`;
 }
 
 // ---------- Scadenziario ----------
@@ -593,11 +807,23 @@ function pageScadenziario() {
   const attivi = D.piani.filter(p => (p.stato || 'attivo') === 'attivo').map(p => ({ p, s: statoAder(p) }));
   const resTipo = t => sum(attivi.filter(x => x.p.tipo === t), x => x.s.residuo);
   const tipi = ORDINE_PIANI.filter(t => attivi.some(x => x.p.tipo === t));
-  const riepilogo = `<div class="card" style="margin-bottom:12px"><h3>Residuo da pagare dei piani attivi</h3><div class="row6">${tipi.map(t => kpiBox(tipoPiano[t], eur(resTipo(t)), attivi.filter(x => x.p.tipo === t).length + ' piani')).join('')}${kpiBox('Totale', '<b>' + eur(sum(attivi, x => x.s.residuo)) + '</b>', attivi.length + ' piani attivi')}</div>
+  const riepilogo = `<div class="card" style="margin-bottom:12px"><h3>Residuo da pagare dei piani attivi</h3><div class="row6">${tipi.map(t => kpiBox(tipoPiano[t], eur(resTipo(t)), attivi.filter(x => x.p.tipo === t).length + ' piani' + (t === 'ader' && attivi.some(x => x.p.tipo === 'ader' && x.s.rosso) ? ' · <b class="bad">zona rossa</b>' : ''), t === 'ader' && attivi.some(x => x.p.tipo === 'ader' && x.s.rosso) ? 'bad' : '', `UI.goA('scadenziario','piani','sec-${t}')`)).join('')}${kpiBox('Totale', '<b>' + eur(sum(attivi, x => x.s.residuo)) + '</b>', attivi.length + ' piani attivi', '', "UI.go('scadenziario','piani')")}</div>
     <div class="small muted" style="margin-top:8px">Residuo = tutte le rate non ancora pagate (capitale e interessi), comprese le rate saltate e quelle scadute da confermare: è quanto resta da versare.</div></div>`;
   let body = '';
   if (f === 'piani') {
-    body = ORDINE_PIANI.map(t => { const ps = D.piani.filter(p => p.tipo === t); if (!ps.length) return ''; return `<h3 style="margin:18px 0 8px">${tipoPiano[t]} · residuo ${eur(resTipo(t))}</h3>` + ps.map(p => cardPiano(p)).join(''); }).join('');
+    body = ORDINE_PIANI.map(t => {
+      let ps = D.piani.filter(p => p.tipo === t); if (!ps.length) return '';
+      const titolo = `<h3 id="sec-${t}" style="margin:18px 0 8px">${tipoPiano[t]} · residuo ${eur(resTipo(t))}</h3>`;
+      // AdER: dal più urgente (più rate scadute) come nel vecchio cruscotto; a 6 rate scadute su 8 è zona rossa
+      if (t === 'ader') return titolo + ps.map(p => ({ p, s: statoAder(p) })).sort(cmpAder).map(x => cardPiano(x.p)).join('');
+      // Finanziamenti e SIMEST: raggruppati per banca e, dentro ogni banca, per data di erogazione; le rate con la scadenza passata e non pagate sono «in ritardo»
+      if (t === 'finanziamento' || t === 'simest') {
+        const gr = {}; ps.slice().sort((a, b) => String(erogazione(a) || '').localeCompare(String(erogazione(b) || ''))).forEach(p => (gr[p.controparte || p.nome] = gr[p.controparte || p.nome] || []).push(p));
+        return titolo + Object.keys(gr).sort((a, b) => a.localeCompare(b)).map(b => { const L = gr[b], st = L.map(p => statoAder(p)), rit = st.filter((x, i) => x.scadute > 0 && (L[i].stato || 'attivo') === 'attivo');
+          return `<div class="gh"><b>${esc(b)}</b><span class="small muted">${L.length} ${L.length === 1 ? 'finanziamento' : 'finanziamenti'} · residuo ${eur(sum(st, x => x.residuo))}</span>${rit.length ? `<span class="pill bad" title="Rate con la scadenza passata e non pagate: siamo in ritardo. Vanno segnate pagate (se lo sono) o regolarizzate con la banca.">in ritardo · ${sum(rit, x => x.scadute)} ${sum(rit, x => x.scadute) === 1 ? 'rata' : 'rate'} · ${eur(sum(rit, x => x.scadutoImporto))}</span>` : ''}</div>` + L.map(p => cardPiano(p)).join(''); }).join('');
+      }
+      return titolo + ps.map(p => cardPiano(p)).join('');
+    }).join('');
   } else {
     let rs = D.rate.filter(r => r.stato_piano === 'attivo');
     if (f === 'prossime') rs = rs.filter(r => r.stato !== 'pagata' && r.stato !== 'saltata' && r.scadenza <= addDays(OGGI, 60));
@@ -617,14 +843,18 @@ function pdfInAttesa() {
 function cardPiano(p) {
   const s = statoAder(p), rs = S.data.rate.filter(r => r.piano_id === p.id);
   const pagato = sum(rs.filter(r => r.stato === 'pagata'), r => r.importo);
-  const stPill = (p.stato || 'attivo') === 'attivo' ? '' : `<span class="pill plain">${esc(String(p.stato).replace('_', ' '))}</span>`;
+  const attivo = (p.stato || 'attivo') === 'attivo', rosso = attivo && s.rosso, inRit = attivo && p.tipo !== 'ader' && s.scadute > 0;
+  const stPill = attivo ? '' : `<span class="pill plain">${esc(String(p.stato).replace('_', ' '))}</span>`;
   const stato = p.tipo === 'ader'
-    ? `${s.pagate}/${s.tot} pagate · contatore <b class="${s.margine <= 1 ? 'bad' : s.margine <= 3 ? 'warn' : ''}">${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="warn">${s.daConf} da confermare</span>` : ''})`
+    ? `${s.pagate}/${s.tot} pagate · contatore <b class="${rosso ? 'zr-n' : s.margine <= 3 ? 'warn' : ''}">${s.contatore}/${s.soglia}</b> (${s.saltate} saltate${s.daConf ? ` + <span class="warn">${s.daConf} da confermare</span>` : ''})`
     : `${s.pagate}/${s.tot} pagate${s.saltate ? ` · <span class="bad">${s.saltate} non pagate</span>` : ''}${s.daConf ? ` · <span class="warn">${s.daConf} da confermare</span>` : ''}`;
-  return `<details class="piano" ${S._open === p.id ? 'open' : ''} ontoggle="UI.toggle('${p.id}',this.open)"><summary><span class="nm">${esc(p.nome)} ${stPill}<div class="small muted">${esc(p.controparte || '')}${p.descrizione ? ' · ' + esc(p.descrizione) : ''}</div></span>
+  const ritPill = inRit ? ` <span class="pill bad" title="Ci sono rate con la scadenza passata e non pagate: siamo in ritardo sul piano. Vanno segnate pagate (se lo sono) o regolarizzate con la banca.">in ritardo · ${s.scadute} ${s.scadute === 1 ? 'rata' : 'rate'} · da ${s.maxGiorni} gg</span>` : '';
+  const erog = (p.tipo === 'finanziamento' || p.tipo === 'simest') && erogazione(p) ? ` · erogato ${p.data_erogazione ? '' : '≈ '}${fmtD(erogazione(p))}` : '';
+  const bannerRosso = rosso ? `<div class="alert bad" style="margin-top:0"><b>Zona rossa: ${s.contatore} rate scadute su ${s.soglia}.</b> ${s.margine > 0 ? `Mancano ${s.margine} ${s.margine === 1 ? 'rata' : 'rate'} alla decadenza: alla ${s.soglia}ª rata non pagata il piano decade automaticamente e l'intero debito torna esigibile in un'unica soluzione. <b>Pagare queste rate con priorità</b> (scaduto ${eur2(s.scadutoImporto)}).` : `La soglia di ${s.soglia} rate è raggiunta: il piano può essere già decaduto, da verificare subito con l'Agenzia (scaduto ${eur2(s.scadutoImporto)}).`}</div>` : '';
+  return `<details class="piano ${rosso ? 'zr' : ''}" ${S._open === p.id || rosso ? 'open' : ''} ontoggle="UI.toggle('${p.id}',this.open)"><summary><span class="nm">${esc(p.nome)} ${stPill}${rosso ? ' <span class="pill bad">ZONA ROSSA</span>' : ''}${ritPill}<div class="small muted">${esc(p.controparte || '')}${p.descrizione ? ' · ' + esc(p.descrizione) : ''}${erog}</div></span>
     <span class="small nowrap">${stato}</span>
     <span class="small nowrap right">residuo <b>${eur(s.residuo)}</b> su ${eur(s.totale)}<div class="bar" style="width:140px"><i class="good" style="width:${s.totale ? 100 * pagato / s.totale : 0}%"></i></div></span></summary>
-    <div class="body">${p.tipo === 'f24' ? pdfInAttesa() : ''}${p.tipo === 'ader' ? `<div class="small muted" style="margin-bottom:6px">Prossima rata: ${s.prossima ? fmtD(s.prossima.scadenza) + ' · ' + eur2(s.prossima.importo) : '–'} · decadenza alla ${s.soglia}ª rata non pagata: contatore ${s.contatore}, margine ${s.margine}</div>` : ''}
+    <div class="body">${bannerRosso}${p.tipo === 'f24' ? pdfInAttesa() : ''}${p.tipo === 'ader' ? `<div class="small muted" style="margin-bottom:6px">Prossima rata: ${s.prossima ? fmtD(s.prossima.scadenza) + ' · ' + eur2(s.prossima.importo) : '–'} · decadenza alla ${s.soglia}ª rata non pagata: contatore ${s.contatore}, margine ${s.margine}</div>` : ''}
     ${tabellaRate(rs, false)}
     <div class="row" style="margin-top:10px"><span class="small muted">${p.tipo === 'f24' ? 'Un versamento per ogni modello F24 ricevuto dal commercialista: scadenza, importo e che cosa si paga.' : `Capitale ${eur(p.capitale_iniziale)} · ${p.n_rate || rs.length} rate ${p.cadenza_mesi === 1 ? 'mensili' : p.cadenza_mesi === 6 ? 'semestrali' : 'ogni ' + p.cadenza_mesi + ' mesi'} da ${eur2(p.rata)}${p.rata1 ? ' (prima ' + eur2(p.rata1) + ')' : ''} · dal ${fmtD(p.prima_rata)}`}</span>
     <span style="margin-left:auto">${p.tipo === 'f24' ? '' : `<select class="btn sm" onchange="UI.statoPiano('${p.id}',this.value)">${['attivo', 'in_istruttoria', 'in_istanza', 'chiuso', 'decaduto'].map(x => `<option value="${x}" ${p.stato === x ? 'selected' : ''}>${x.replace('_', ' ')}</option>`).join('')}</select> `}${p.tipo === 'f24' ? `<button class="btn sm" onclick="UI.modal('f24')">Aggiungi F24</button>` : `<button class="btn sm" onclick="UI.modal('rata','${p.id}')">Aggiungi rata</button>`}</span></div></div></details>`;
@@ -632,9 +862,11 @@ function cardPiano(p) {
 const pdfRata = r => { const d = r.documento_id && (S.data.docF24 || []).find(x => x.id === r.documento_id); return d ? `<div><button class="btn sm ghost" style="max-width:100%;white-space:normal;text-align:left;overflow-wrap:anywhere" onclick="UI.apriPdf('${d.id}')" title="Apre il PDF originale">PDF ${esc(d.nome_file)}</button></div>` : ''; };
 function tabellaRate(rs, conPiano) {
   if (!rs.length) return '<div class="muted">Nessuna rata.</div>';
+  const rossi = new Set(S.data.piani.filter(p => (p.stato || 'attivo') === 'attivo' && statoAder(p).rosso).map(p => p.id));
   return `<div class="scroll"><table class="resp"><tr>${conPiano ? '<th>Piano</th>' : ''}<th>N.</th><th>Scadenza</th><th class="num">Importo</th><th>Stato</th><th>Pagata il</th><th>Segnata da</th><th></th></tr>
-  ${rs.map(r => `<tr>${conPiano ? `<td>${esc(r.nome)}<div class="small muted">${esc(r.controparte || '')}</div></td>` : ''}<td>${r.n}${r.n_rate ? '/' + r.n_rate : ''}</td><td class="nowrap ${r.stato_effettivo === 'da_confermare' ? 'warn' : ''}">${fmtD(r.scadenza)}</td><td class="num">${eur2(r.importo)}</td><td>${pillStato(r.stato_effettivo)}</td><td>${r.data_pagamento ? fmtD(r.data_pagamento) : ''}${r.banca ? '<span class="d2">' + esc(r.banca) + '</span>' : ''}</td><td class="small muted">${r.marcata_da ? esc(r.marcata_da) + ' · ' + fmtD(r.marcata_il) : ''}${r.nota ? '<div>' + esc(r.nota) + '</div>' : ''}${pdfRata(r)}</td>
-  <td class="right">${r.stato === 'pagata' ? `<button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')" title="Torna a non pagata">annulla</button>` : r.stato === 'saltata' ? `<button class="btn sm" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')">annulla</button>` : `<button class="btn sm primary" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm" onclick="UI.setRata('${r.id}','saltata')">saltata</button>`}${r.tipo === 'f24' && puoElim() ? ` <button class="btn sm danger" onclick="UI.chiediEliminaRata('${r.id}')">elimina</button>` : ''}</td></tr>`).join('')}</table></div>`;
+  ${rs.map(r => { const inRit = r.stato !== 'pagata' && r.scadenza < OGGI && r.stato_piano === 'attivo', rosso = inRit && rossi.has(r.piano_id), gg = inRit ? giorni(r.scadenza, OGGI) : 0;
+    return `<tr class="${rosso ? 'zrr' : ''}">${conPiano ? `<td>${esc(r.nome)}<div class="small muted">${esc(r.controparte || '')}</div></td>` : ''}<td>${r.n}${r.n_rate ? '/' + r.n_rate : ''}</td><td class="nowrap ${rosso ? 'rit-big' : inRit ? 'bad' : r.stato_effettivo === 'da_confermare' ? 'warn' : ''}">${fmtD(r.scadenza)}${inRit ? `<span class="d2 ${rosso ? 'rit' : ''}">${rosso ? 'SCADUTA da ' + gg + ' gg' : 'in ritardo di ' + gg + ' gg'}</span>` : ''}</td><td class="num">${eur2(r.importo)}</td><td>${pillStato(r.stato_effettivo)}</td><td>${r.data_pagamento ? fmtD(r.data_pagamento) : ''}${r.banca ? '<span class="d2">' + esc(r.banca) + '</span>' : ''}</td><td class="small muted">${r.marcata_da ? esc(r.marcata_da) + ' · ' + fmtD(r.marcata_il) : ''}${r.nota ? '<div>' + esc(r.nota) + '</div>' : ''}${pdfRata(r)}</td>
+  <td class="right">${r.stato === 'pagata' ? `<button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')" title="Torna a non pagata">annulla</button>` : r.stato === 'saltata' ? `<button class="btn sm" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm ghost" onclick="UI.setRata('${r.id}','futura')">annulla</button>` : `<button class="btn sm primary" onclick="UI.modal('pagata','${r.id}')">pagata</button> <button class="btn sm" onclick="UI.setRata('${r.id}','saltata')">saltata</button>`}${r.tipo === 'f24' && puoElim() ? ` <button class="btn sm danger" onclick="UI.chiediEliminaRata('${r.id}')">elimina</button>` : ''}</td></tr>`; }).join('')}</table></div>`;
 }
 
 // ---------- Conto economico ----------
@@ -771,7 +1003,7 @@ function lineeAnticipi() {
 // Documenti tra cui scegliere (facoltativo): fatture di clienti ancora aperte in NTS e proforme in attesa. Scegliendone una il modulo si compila da solo.
 function opzioniAnticipo() {
   const usate = new Set((S.data.antic || []).filter(a => a.stato === 'aperto').flatMap(a => [a.chiave_partita, a.chiave_doc]).filter(Boolean)), out = [];
-  partiteC().filter(s => s.importo > 0 && !s.apertura && !s.daAbbinare).forEach(s => out.push({ k: 'pt', chiave: s.chiave, ord: String(s.datdoc || ''), cliente: s.controparte || '', documento: `ft ${s.numdoc} del ${fmtD(s.datdoc)}`, numero: String(s.numdoc || ''), datdoc: s.datdoc ? String(s.datdoc).slice(0, 10) : '', scadenza: s.datsca ? String(s.datsca).slice(0, 10) : '', importo: s.importo }));
+  S.data.scad.filter(s => s.tipo_cf === 'C' && !s.copertura && !s.banca_pag && s.importo > 0 && !s.apertura && !s.daAbbinare).forEach(s => out.push({ k: 'pt', chiave: s.chiave, ord: String(s.datdoc || ''), cliente: s.controparte || '', documento: `ft ${s.numdoc} del ${fmtD(s.datdoc)}`, numero: String(s.numdoc || ''), datdoc: s.datdoc ? String(s.datdoc).slice(0, 10) : '', scadenza: s.datsca ? String(s.datsca).slice(0, 10) : '', importo: s.importo }));
   proformeAttese().forEach(p => out.push({ k: 'pf', chiave: p.chiave, ord: String(p.datdoc || ''), cliente: p.controparte || '', documento: `proforma ${p.numdoc} del ${fmtD(p.datdoc)}`, numero: '', datdoc: '', scadenza: '', importo: p.totdoc }));
   out.sort((a, b) => a.ord < b.ord ? 1 : a.ord > b.ord ? -1 : 0);
   out.forEach(o => { o.label = `${o.cliente} · ${o.documento} · ${eur2(o.importo)}${usate.has(o.chiave) ? ' · già presentato' : ''}`; });
@@ -902,12 +1134,13 @@ function dettFinanziamenti() {
   D.sp.filter(x => x.voce === 'SP.DEB_FINANZIAMENTI' && Math.abs(x.saldo) > 0.5).forEach(x => metti(chiave(x.descrizione), 'conti', x));
   D.piani.filter(p => (p.tipo === 'finanziamento' || p.tipo === 'simest') && p.stato === 'attivo').forEach(p => metti(chiave((p.controparte || '') + ' ' + p.nome), 'piani', { p, s: statoAder(p) }));
   const totDeb = sum(gruppi, g => -sum(g.conti, x => x.saldo)), totRes = sum(gruppi, g => sum(g.piani, x => x.s.residuo));
-  return `<div class="scroll"><table class="resp"><tr><th>Finanziamento e piano</th><th class="num">Debito contabile</th><th class="num">Residuo da piano</th><th class="num">Differenza</th></tr>
+  return `<div class="scroll"><table class="resp"><tr><th>Finanziamento e piano</th><th class="num">Debito contabile<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">senza interessi</div></th><th class="num">Residuo da piano<div class="small" style="font-weight:400;text-transform:none;letter-spacing:0">con interessi</div></th><th class="num">Differenza</th></tr>
     ${gruppi.map(g => { const deb = -sum(g.conti, x => x.saldo), res = sum(g.piani, x => x.s.residuo);
       return `<tr><td>${g.conti.length ? g.conti.map(x => esc(x.descrizione)).join('<br>') : '<span class="muted">nessun conto contabile collegato</span>'}${g.piani.length ? `<span class="d2">${g.piani.map(({ p, s }) => `${esc(p.nome)} · ${s.pagate}/${s.tot} rate pagate · prossima ${s.prossima ? fmtD(s.prossima.scadenza) : '–'}`).join('<br>')}</span>` : '<span class="d2 warn">nessun piano di rimborso nello Scadenziario</span>'}</td>
       <td class="num">${g.conti.length ? eur(deb) : '–'}</td><td class="num">${g.piani.length ? eur(res) : '–'}</td><td class="num muted">${g.conti.length && g.piani.length ? segnato(res - deb) : ''}</td></tr>`; }).join('')}
     <tr class="tot"><td>Totale</td><td class="num">${eur(totDeb)}</td><td class="num">${eur(totRes)}</td><td class="num">${segnato(totRes - totDeb)}</td></tr></table></div>
-    <div class="small muted" style="margin-top:6px">Debito contabile = solo capitale (NTS); residuo da piano = rate non pagate, capitale e interessi. Una differenza positiva di qualche punto è normale; differenze grandi o negative vanno chieste a Michela. Le rate si segnano nello ${link('Scadenziario', 'scadenziario', 'piani')}.</div>`;
+    <div class="alert" style="margin-top:10px"><b>Il debito contabile non comprende gli interessi</b>: è il solo capitale ancora da rimborsare secondo NTS (gli interessi si registrano in contabilità quando vengono addebitati). Perciò anche la PFN, che usa il debito contabile, è al netto degli interessi futuri e maturati. Il residuo da piano comprende invece capitale e interessi di tutte le rate non pagate.</div>
+    <div class="small muted" style="margin-top:6px">Una differenza (residuo da piano − debito contabile) positiva di qualche punto è normale, perché sono gli interessi; differenze grandi o negative vanno chieste a Michela. Le rate si segnano nello ${link('Scadenziario', 'scadenziario', 'piani')}.</div>`;
 }
 function dettSoci(pos) {
   const ps = S.data.piani.filter(p => p.tipo === 'soci');
@@ -939,7 +1172,7 @@ function pageBanche() {
         <div class="small muted" style="margin-top:6px">Gli effetti SBF diventano liquidità solo quando la banca li accredita o se vengono anticipati. La carta di credito aziendale è un conto di passaggio e non è liquidità. Per Cassa Padana il conto c/incassi è sommato al c/c (conto unico).</div></div>
       <div class="card"><h3>PFN bancaria</h3><div class="kpi">${eur(pos.pfnStima)}</div><div class="sub" style="margin-bottom:8px">clicca una voce per vederne il dettaglio</div>
         <table><tr><th></th><th class="num">${pos.diversa ? 'Contabile' : ''}</th>${pos.diversa ? '<th class="num">Stimata</th>' : ''}</tr>
-          ${riga('Finanziamenti e mutui', pos.fin, pos.fin, 'fin')}${riga('Anticipi (castelletto e SBF anticipati)', c.anticipi, s.anticipi, 'anticipi')}${riga('Scoperti di conto corrente', c.scoperti, s.scoperti, 'scoperti')}${riga('− Liquidità totale', -c.liquidita, -s.liquidita, 'liquidita')}
+          ${riga('Finanziamenti e mutui <span class="small muted">(debito contabile, senza interessi)</span>', pos.fin, pos.fin, 'fin')}${riga('Anticipi (castelletto e SBF anticipati)', c.anticipi, s.anticipi, 'anticipi')}${riga('Scoperti di conto corrente', c.scoperti, s.scoperti, 'scoperti')}${riga('− Liquidità totale', -c.liquidita, -s.liquidita, 'liquidita')}
           ${riga('PFN bancaria', pos.pfn, pos.pfnStima, null, 'tot')}${riga('Finanziamento soci', pos.soci, pos.soci, 'soci')}${riga('PFN totale', pos.pfnTot, pos.pfnTotStima, null, 'tot')}</table></div>
     </div>
     ${d ? `<div class="card dett" id="dett"><div class="head" style="margin-bottom:8px"><h3 style="margin:0">${titoli[d]}</h3><button class="btn sm" onclick="UI.dett(null)">chiudi ✕</button></div>${corpo}</div>` : ''}
@@ -970,6 +1203,7 @@ function pageStato() {
   <div class="stack"><div class="row2">
     <div class="card"><h3>Dal gestionale NTS</h3><ul class="list">
       <li><span>Ultimo invio notturno</span><b>${fmtDT(D.stato.ultimo_invio)}</b></li>
+      <li><span>Questa pagina ha letto i dati</span><b>${fmtDT(new Date(S.loadedAt).toISOString())} · si aggiorna da sola (ogni 2 minuti e al ritorno sulla scheda)</b></li>
       <li><span>Ultima registrazione in prima nota</span><b>${fmtD(D.stato.ultima_registrazione)}</b></li>
       <li><span>Righe di prima nota copiate</span><b>${n0.format(D.stato.righe_prinot || 0)}</b></li>
       <li><span>Ultimo movimento bancario importato</span><b>${fmtD(pos.ultimoMov)}</b></li>
@@ -1028,19 +1262,46 @@ async function loadMappa() {
   S.mappa = { voci, m, da, conti, mov, saldo };
 }
 
+// Dilazioni: rate uguali (l'ultima assorbe gli arrotondamenti) e riga del modulo
+function generaRate(tot, n, primaData) {
+  n = Math.max(1, Math.min(36, Math.round(n) || 1)); const base = Math.floor(tot / n * 100) / 100, out = [];
+  for (let i = 0; i < n; i++) out.push({ data: addMonths(primaData, i), importo: i === n - 1 ? Math.round((tot - base * (n - 1)) * 100) / 100 : base });
+  return out;
+}
+const rigaDil = (data, importo) => `<div class="dil-r" style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto;gap:6px;align-items:center;margin-bottom:6px"><input type="date" name="d" value="${esc(data || '')}" required style="min-width:0;border:1px solid #cfc5b8;border-radius:8px;padding:7px 8px;background:#fff"><input name="i" inputmode="decimal" data-dec="2" data-nohint="1" value="${importo == null || importo === '' ? '' : String(importo).replace('.', ',')}" placeholder="importo" required style="min-width:0;text-align:right;border:1px solid #cfc5b8;border-radius:8px;padding:7px 8px;background:#fff"><button type="button" class="btn sm ghost" title="Togli questa rata" onclick="this.parentNode.remove();UI.dilTot()">×</button></div>`;
 // ---------- Modali ----------
+// id di una partita: «pt:chiave» (intera), «tr:N:chiave» (rata N di una dilazione), «pf:chiave» (proforma)
+function parseId(id) { const p = String(id).split(':'), kind = p.shift(); let n = null; if (kind === 'tr') n = Number(p.shift()); return { kind, n, chiave: p.join(':') }; }
 function renderModal() {
   const M = S.modal; let h = '';
   const bancheOpts = sel => `<option value="">—</option>` + [...new Set((S.data.anagBanche || []).map(b => nomeBanca(b.descrizione)).filter(b => b !== 'Altro' && b !== 'Cassa contanti'))].map(b => `<option ${b === sel ? 'selected' : ''}>${esc(b)}</option>`).join('') + `<option>Cassa</option>`;
   if (M.type === 'incasso') {
-    const [kind, ...rest] = M.id.split(':'); const chiave = rest.join(':');
-    const pt = kind === 'pt' ? S.data.scad.find(s => s.chiave === chiave) : null, pf = kind === 'pf' ? S.data.proforme.find(p => p.chiave === chiave) : null;
-    const cli = pf || (pt && pt.tipo_cf === 'C'); const imp = pf ? pf.totdoc : Math.abs(pt.importo);
-    const ref = pf ? `proforma ${pf.numdoc} del ${fmtD(pf.datdoc)} · ${esc(pf.controparte || '')}` : `${pt.apertura ? 'saldo 2025' : 'ft ' + (pt.numdoc || '') + ' del ' + fmtD(pt.datdoc)} · ${esc(pt.controparte || '')} · scadenza ${fmtD(pt.datsca)}`;
+    const { kind, n, chiave } = parseId(M.id);
+    const pt = (kind === 'pt' || kind === 'tr') ? S.data.scad.find(s => s.chiave === chiave) : null, pf = kind === 'pf' ? S.data.proforme.find(p => p.chiave === chiave) : null;
+    const rata = kind === 'tr' && pt ? scadX().find(x => x.chiave === chiave && x.tr && x.tr.n === n) : null;
+    const cli = pf || (pt && pt.tipo_cf === 'C'); const imp = r2(pf ? pf.totdoc : rata ? Math.abs(rata.importo) : Math.abs(pt.importo));
+    const ref = pf ? `proforma ${pf.numdoc} del ${fmtD(pf.datdoc)} · ${esc(pf.controparte || '')}` : `${pt.apertura ? 'saldo 2025' : 'ft ' + (pt.numdoc || '') + ' del ' + fmtD(pt.datdoc)} · ${esc(pt.controparte || '')} · ${rata ? (rata.tr.n ? `<b>rata ${rata.tr.n}/${rata.tr.tot} della dilazione</b> del ${fmtD(rata.datsca)} (scadenza originale ${fmtD(pt.datsca)})` : '<b>quota non pianificata</b> della dilazione') : 'scadenza ' + fmtD(pt.datsca)}`;
     h = `<h2>${cli ? 'Incasso ricevuto' : 'Pagamento fatto'}</h2><p class="small muted">${ref}</p>
     <form onsubmit="event.preventDefault();UI.confermaIncasso(this,'${M.id}')"><div class="row"><div class="field"><label>Data</label><input name="data" type="date" value="${OGGI}" required></div><div class="field"><label>Importo</label><input name="importo" inputmode="decimal" value="${String(imp).replace('.', ',')}" required></div></div><div class="field"><label>Banca</label><select name="banca">${bancheOpts(pt && pt.banca ? nomeBanca(pt.banca) : '')}</select></div><div class="field"><label>Nota (facoltativo)</label><input name="nota" placeholder="es. bonifico visto sul portale"></div>
     <div class="small muted" style="margin-bottom:10px">Resta segnato in Fiammetta finché NTS non registra ${cli ? "l'incasso" : 'il pagamento'}; poi si chiude da solo.</div>
     <div class="row"><button class="btn primary">Conferma</button><button type="button" class="btn" onclick="UI.closeModal()">Annulla</button></div></form>`;
+  } else if (M.type === 'dilazione') {
+    const sp = S.data.scad.find(x => x.chiave === M.id);
+    if (!sp) h = '<h2>Dilazione</h2><p class="small muted">La partita non è più aperta in NTS.</p><div class="row"><button class="btn" onclick="UI.closeModal()">Chiudi</button></div>';
+    else {
+      const cli = sp.tipo_cf === 'C', d = sp.dil ? sp.dil.d : null, R = Math.abs(sp.importo), rest = sp.dil ? sp.dil.rest : R;
+      let rate = d ? d.rate.slice().sort((a, b) => String(a.data).localeCompare(String(b.data))).map(t => ({ data: String(t.data).slice(0, 10), importo: Number(t.importo) })) : generaRate(rest, 3, addMonths(OGGI, 1));
+      h = `<h2>Dilazione concordata</h2><p class="small muted"><b>${esc(sp.controparte || sp.conto)}</b> · ${sp.apertura ? 'saldo 2025' : 'ft ' + esc(String(sp.numdoc || '')) + ' del ' + fmtD(sp.datdoc)} · scadenza originale ${fmtD(sp.datsca)}<br>Aperto in NTS <b>${eur2(R)}</b>${sp.dil && sp.dil.pendTot > 0.004 ? ` · già segnato a mano ${eur2(sp.dil.pendTot)} (ancora da registrare in NTS) · da ${cli ? 'incassare' : 'pagare'} <b>${eur2(rest)}</b>` : ''}</p>
+      <form id="fdil" data-res="${rest.toFixed(2)}" data-scad="${esc(sp.datsca)}" oninput="UI.dilTot()" onsubmit="event.preventDefault();UI.salvaDilazione(this,'${esc(sp.chiave)}')">
+        <div class="small muted" style="margin-bottom:6px">Scrivi le rate come le avete concordate. Se alcune sono già ${cli ? 'incassate' : 'pagate'} puoi inserirle comunque: Fiammetta assegna il residuo aperto in NTS partendo dall'ultima rata, quindi quelle già saldate escono da sole.</div>
+        <div class="row" style="align-items:flex-end;margin-bottom:8px"><div class="field" style="flex:0 0 90px"><label>Genera</label><input name="g_n" type="number" min="1" max="36" value="3" title="Numero di rate"></div><div class="field" style="flex:0 0 150px"><label>rate mensili dal</label><input name="g_data" type="date" value="${addMonths(OGGI, 1)}"></div><div class="field" style="flex:0 0 auto"><button type="button" class="btn sm" onclick="UI.dilGenera(this.form)" title="Divide il residuo in rate uguali: poi correggi gli importi come serve">Dividi il residuo</button></div></div>
+        <div id="dil-righe">${rate.map(t => rigaDil(t.data, t.importo)).join('')}</div>
+        <div style="margin:4px 0 8px"><button type="button" class="btn sm ghost" onclick="UI.dilRiga()">+ aggiungi rata</button></div>
+        <div id="dil-tot" class="small" style="margin-bottom:8px"></div>
+        <div class="field"><label>Nota (facoltativo)</label><input name="nota" value="${esc(d ? d.nota || '' : '')}" placeholder="es. accordo del ${fmtD(OGGI)} con il fornitore, via mail"></div>
+        <div class="row"><button class="btn primary">${d ? 'Salva le modifiche' : 'Salva la dilazione'}</button>${d ? `<button type="button" class="btn danger" onclick="UI.annullaDilazione(${d.id})" title="Torna alla scadenza originale">Annulla la dilazione</button>` : ''}<button type="button" class="btn" onclick="UI.closeModal()">Chiudi</button></div>
+      </form>`;
+    }
   } else if (M.type === 'pagata') {
     const r = S.data.rate.find(x => x.id === M.id);
     h = `<h2>Rata pagata</h2><p class="small muted">${esc(r.nome)} · rata ${r.n}${r.n_rate ? '/' + r.n_rate : ''} · scadenza ${fmtD(r.scadenza)} · ${eur2(r.importo)}</p>
@@ -1113,6 +1374,7 @@ const UI = {
     if (v === 'partite' && arg) { const [tab, filtro] = arg.split(':'); S.partite.tab = tab; S.partite.filtro = filtro || 'tutto'; S.partite.cerca = ''; }
     try { localStorage.setItem('fiammetta-view', v); } catch (e) {} render();
   },
+  goA(v, arg, anchor) { S._anchor = anchor; UI.go(v, arg); },
   partite(tab, filtro) { if (tab) { S.partite.tab = tab; S.partite.filtro = 'tutto'; S.partite.cerca = ''; } if (filtro) S.partite.filtro = filtro; render(); },
   pfFiltro(k) { S.partite.pfFiltro = k; S._keepScroll = true; render(); },
   dett(k) { S.dett = (k && S.dett !== k) ? k : null; S._keepScroll = true; render(); const el = document.getElementById('dett'); if (el && S.dett) { const r = el.getBoundingClientRect(); if (r.top > window.innerHeight * 0.75) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
@@ -1138,12 +1400,42 @@ const UI = {
   closeModal() { S.modal = null; render(); },
   async reload() { await guard(async () => { await loadAll(); S.mappa = null; render(); }, 'Dati aggiornati'); },
   async logout() { await S.sb.auth.signOut(); location.reload(); },
+  dilRiga() { const c = document.getElementById('dil-righe'); if (!c) return; const ult = [...c.querySelectorAll('.dil-r')].pop(); const dv = ult && ult.querySelector('[name=d]').value; c.insertAdjacentHTML('beforeend', rigaDil(dv ? addMonths(dv, 1) : OGGI, '')); UI.dilTot(); },
+  dilGenera(f) { const n = Number(f.g_n.value) || 1, d0 = f.g_data.value || OGGI, res = Number(f.dataset.res) || 0; document.getElementById('dil-righe').innerHTML = generaRate(res, n, d0).map(t => rigaDil(t.data, t.importo)).join(''); UI.dilTot(); },
+  dilRate() { return [...document.querySelectorAll('#dil-righe .dil-r')].map(r => ({ data: r.querySelector('[name=d]').value, importo: num(r.querySelector('[name=i]').value) })); },
+  dilTot() {
+    const f = document.getElementById('fdil'), el = document.getElementById('dil-tot'); if (!f || !el) return;
+    const rate = UI.dilRate().filter(t => t.importo), tot = sum(rate, t => t.importo), res = Number(f.dataset.res) || 0, diff = Math.round((tot - res) * 100) / 100;
+    el.className = 'small ' + (Math.abs(diff) <= 0.5 ? 'good' : diff > 0 ? 'warn' : 'bad');
+    el.innerHTML = `Rate: <b>${rate.length}</b> · totale <b>${eur2(tot)}</b> · residuo ${eur2(res)}<br>` + (Math.abs(diff) <= 0.5 ? 'Le rate coprono esattamente il residuo.' : diff > 0 ? `Le rate superano il residuo di ${eur2(diff)}: va bene se le prime sono già saldate (il residuo viene assegnato partendo dall'ultima rata).` : `Mancano ${eur2(-diff)} rispetto al residuo: restano con la scadenza originale (${fmtD(f.dataset.scad)}) come «quota non pianificata».`);
+  },
+  async salvaDilazione(form, chiave) {
+    await guard(async () => {
+      const sp = S.data.scad.find(x => x.chiave === chiave); if (!sp) throw new Error('la partita non è più aperta in NTS');
+      const rate = UI.dilRate(); if (!rate.length) throw new Error('inserisci almeno una rata');
+      rate.forEach(t => { if (!/^\d{4}-\d{2}-\d{2}$/.test(t.data || '')) throw new Error('ogni rata vuole una data'); if (!t.importo || t.importo <= 0) throw new Error('ogni rata vuole un importo maggiore di zero'); });
+      rate.sort((a, b) => a.data.localeCompare(b.data)); const json = rate.map((t, i) => ({ n: i + 1, data: t.data, importo: Math.round(t.importo * 100) / 100 }));
+      const nota = form.nota.value.trim() || null, d = sp.dil ? sp.dil.d : null, ora = new Date().toISOString();
+      if (d) { const { error } = await S.sb.from('dilazioni').update({ rate: json, nota, aggiornato_da: chi(), aggiornato_il: ora }).eq('id', d.id); if (error) throw error; }
+      else { const row = { tipo_cf: sp.tipo_cf, chiave_partita: sp.chiave, conto: sp.conto, controparte: sp.controparte, documento: sp.apertura ? 'saldo 2025' : 'ft ' + (sp.numdoc || '') + ' del ' + fmtD(sp.datdoc), importo_nts: Math.abs(sp.importo), rate: json, stato: 'attiva', nota, creato_da: chi() }; const { error } = await S.sb.from('dilazioni').insert(row); if (error) throw error; }
+      S.modal = null; await reloadDilazioni(); S._keepScroll = true; render();
+    }, 'Dilazione salvata: al posto della scadenza originale valgono le date delle rate');
+  },
+  async annullaDilazione(id) {
+    await guard(async () => { const { error } = await S.sb.from('dilazioni').update({ stato: 'annullata', aggiornato_da: chi(), aggiornato_il: new Date().toISOString() }).eq('id', id); if (error) throw error; S.modal = null; await reloadDilazioni(); S._keepScroll = true; render(); }, 'Dilazione annullata: torna la scadenza originale');
+  },
   async confermaIncasso(form, id) {
     await guard(async () => {
-      const [kind, ...rest] = id.split(':'); const chiave = rest.join(':');
-      const pt = kind === 'pt' ? S.data.scad.find(s => s.chiave === chiave) : null, pf = kind === 'pf' ? S.data.proforme.find(p => p.chiave === chiave) : null;
+      const { kind, n, chiave } = parseId(id);
+      const pt = (kind === 'pt' || kind === 'tr') ? S.data.scad.find(s => s.chiave === chiave) : null, pf = kind === 'pf' ? S.data.proforme.find(p => p.chiave === chiave) : null;
       const importo = num(form.importo.value); if (!importo) throw new Error('importo non valido');
       const row = { tipo: (pf || pt.tipo_cf === 'C') ? 'incasso' : 'pagamento', chiave_partita: pt ? pt.chiave : null, chiave_doc: pf ? pf.chiave : null, conto: pf ? pf.conto : pt.conto, controparte: pf ? pf.controparte : pt.controparte, data: form.data.value, importo, banca: form.banca.value || null, nota: form.nota.value.trim() || null, creato_da: chi() };
+      if (kind === 'tr') {
+        // pagamento di una rata: ricordo il residuo NTS di adesso, così quando NTS lo registra (il residuo cala) il segnato a mano si chiude da solo
+        const rest = pt.dil ? pt.dil.rest : Math.abs(pt.importo);
+        if (importo > rest + 0.5) throw new Error('importo superiore al residuo della partita (' + eur2(rest) + ')');
+        row.rata_n = n; row.residuo_nts = Math.round(rest * 100) / 100; row.nota = ['rata ' + (n || 'extra') + '/' + (pt.dil ? pt.dil.tr.length : '?'), row.nota].filter(Boolean).join(' · ');
+      }
       const { error } = await S.sb.from('movimenti_app').insert(row); if (error) throw error;
       S.modal = null; await reloadMovimenti(); S._keepScroll = true; render();
     }, 'Segnato: resta in attesa della registrazione in NTS');
@@ -1415,7 +1707,25 @@ async function start() {
   try { const v = localStorage.getItem('fiammetta-view'); if (v && VISTE.some(x => x[0] === v)) S.view = v; } catch (e) {}
   render();
 }
-setInterval(async () => { if (S.loadedAt && !S.modal && !S.busy && !document.hidden && Date.now() - S.loadedAt > 10 * 60000) { try { await loadAll(); S._keepScroll = true; render(); } catch (e) {} } }, 60000);
+// Aggiornamento automatico: ogni 2 minuti, e appena la scheda torna in primo piano, Fiammetta chiede al database «quando è arrivato l'ultimo invio del gestionale?»
+// (stato_dati). Se è cambiato (invio delle 3 di notte), se è passata la mezzanotte o se i dati hanno più di 10 minuti, rilegge tutto da sola, senza F5.
+// Non tocca nulla mentre c'è una finestra aperta o si sta scrivendo in un campo.
+async function controllaDati() {
+  if (!S.data || !S.loadedAt || S.busy || S.modal || document.hidden || S._ctrl) return;
+  const ae = document.activeElement; if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return;
+  S._ctrl = true;
+  try {
+    const { data, error } = await S.sb.rpc('stato_dati'); if (error) throw error;
+    const nuovoInvio = data && data.ultimo_invio && data.ultimo_invio !== S.data.stato.ultimo_invio, giornoNuovo = isoLocal() !== OGGI, vecchi = Date.now() - S.loadedAt > 10 * 60000;
+    if (nuovoInvio || giornoNuovo || vecchi) {
+      await loadAll(); S._keepScroll = true; render();
+      toast(nuovoInvio ? 'Dati nuovi dal gestionale (invio del ' + fmtDT(data.ultimo_invio) + '): pagina aggiornata' : giornoNuovo ? 'Nuovo giorno: dati aggiornati' : 'Dati aggiornati');
+    }
+  } catch (e) { console.error('controllo aggiornamenti', e); } finally { S._ctrl = false; }
+}
+setInterval(controllaDati, 120000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) controllaDati(); });
+window.addEventListener('focus', controllaDati);
 
 // ---------- Importi: sia il punto sia la virgola sono la virgola decimale ----------
 // Durante la digitazione il campo accetta solo cifre e un separatore decimale (il punto diventa virgola), con massimo 2 decimali (3 per i tassi):
@@ -1432,7 +1742,7 @@ function pulisciImporto(el) {
   }
   if (nuova == null) nuova = out.length;
   if (out !== raw) { el.value = out; try { el.setSelectionRange(nuova, nuova); } catch (e) {} }
-  if (el.closest('td')) return;
+  if (el.closest('td') || el.dataset.nohint) return;
   let h = el.nextElementSibling; if (!h || !h.classList.contains('hint')) { h = document.createElement('div'); h.className = 'hint'; el.insertAdjacentElement('afterend', h); }
   const v = num(out);
   if (extra || troppi) { h.className = 'hint bad'; h.textContent = (extra ? 'Un solo separatore decimale (. oppure ,). ' : '') + (troppi ? `Massimo ${dec} decimali. ` : '') + 'Scrivi 1234,56, senza punto delle migliaia.' + (v == null ? '' : ' Ora vale ' + (dec > 2 ? String(v).replace('.', ',') + ' %' : eur2(v)) + '.'); }

@@ -173,6 +173,28 @@ td .d2{display:block;font-size:12.5px;color:var(--muted);font-weight:400}
   table.resp tr.grp{display:block;background:#f3eee7;padding:7px 10px;border-radius:8px;margin-top:6px}table.resp tr.grp td{padding:0;border:0}
   table.ce{font-size:13px}table.ce td:first-child{min-width:140px;max-width:170px}
 }
+/* v2.0: riquadri cliccabili, spiegazioni al passaggio del mouse, zona rossa AdER */
+.kclk{cursor:pointer;border-radius:10px;padding:6px 8px;margin:-6px -8px;transition:background .12s,box-shadow .12s}
+.kclk:hover{background:#fbf3ea;box-shadow:inset 0 0 0 1px #f0d3b8}
+.kclk:focus-visible,.kclk2:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.kclk .lab::after{content:' \203A';color:var(--accent);font-weight:700}
+.kclk2{cursor:pointer;transition:box-shadow .12s,border-color .12s}
+.kclk2:hover{border-color:#f0b48f;box-shadow:0 2px 10px rgba(217,72,15,.10)}
+.tip{text-decoration:underline dotted #b9ab9c;text-underline-offset:3px;cursor:help}
+[data-tip]:not(.kclk):not(.kclk2):not(button):not(a):not(summary){cursor:help}
+.tooltip{position:fixed;z-index:90;max-width:340px;background:#2b2320;color:#fff;font:12.5px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-weight:400;text-transform:none;letter-spacing:0;padding:8px 11px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.28);pointer-events:none;opacity:0;transition:opacity .12s;left:0;top:0}
+.tooltip.on{opacity:1}
+.zr{border-left:5px solid var(--bad);background:#fdf0f0}
+.zr .nm,.zr .nm b{font-size:1.12em;color:var(--bad)}
+.zr-n{font-size:1.45em;font-weight:800;color:var(--bad)}
+.rit{color:var(--bad);font-weight:700}
+td .d2.rit{color:var(--bad);font-weight:700}
+tr.zrr td{background:#fdf0f0}
+details.piano.zr{border-left:5px solid var(--bad);background:#fffafa}
+details.piano.zr>summary .nm{font-size:1.1em}
+.gh{margin:14px 0 6px;display:flex;gap:10px;flex-wrap:wrap;align-items:baseline}
+.gh b{font-size:15px}
+.rit-big{color:var(--bad);font-weight:800;font-size:1.12em}
 </style>
 </head>
 <body>
