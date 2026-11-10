@@ -11,7 +11,7 @@ const C = window.FIAMMETTA_CONFIG;
 const S = { sb: null, email: '', me: null, view: 'oggi', data: null, loadedAt: 0, modal: null, setPwd: false,
   filtroRate: 'piani', annoCE: null, mappa: null, cercaConto: '', soloMov: true, busy: false,
   partite: { tab: 'incassi', filtro: 'tutto', cerca: '', pfFiltro: 'aperte' }, clienti: null, dett: null };
-const VISTE = [['oggi', 'Oggi'], ['partite', 'Crediti e debiti'], ['scadenziario', 'Scadenziario'], ['banche', 'Banche e PFN'], ['ce', 'Conto economico'], ['stato', 'Stato dati'], ['impostazioni', 'Impostazioni']];
+const VISTE = [['oggi', 'Oggi'], ['partite', 'Crediti e debiti'], ['scadenziario', 'Scadenziario'], ['banche', 'Banche e PFN'], ['ce', 'Conto economico'], ['andamento', 'Andamento'], ['stato', 'Stato dati'], ['impostazioni', 'Impostazioni']];
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // de-DE: stesso formato italiano (punto per le migliaia, virgola per i decimali) ma raggruppa anche i numeri a 4 cifre
@@ -523,12 +523,29 @@ const GL = [
   [/^simest( ·|$)/, "Finanziamenti agevolati SIMEST (fiere internazionali, esportatrici): rate semestrali."],
   [/^finanziamento soci( ·|$)/, "Finanziamento dei soci alla società: piano di rimborso (da gennaio 2027)."],
   [/^piani di rientro fornitori( ·|$)/, "Piani di rate concordati con fornitori per debiti pregressi: contano il residuo del piano, non le singole fatture."],
+  // Andamento
+  ['ricavi da inizio anno', "Ricavi (IVA esclusa) registrati in prima nota da gennaio all'ultimo mese caricato. Il confronto è con gli stessi mesi dell'anno prima, presi dai registri vendite (trimestri interi)."],
+  ['ricavi ultimi 3 mesi', "Ricavi degli ultimi tre mesi registrati contro i tre mesi precedenti: toglie la stagionalità mese per mese."],
+  [/^pfn bancaria a fine/, "Posizione finanziaria netta bancaria a fine mese, ricostruita dai saldi contabili di NTS (finanziamenti + anticipi + scoperti − liquidità). Segue le registrazioni: è più indietro della stima di oggi. Sotto il valore trovi il confronto con gennaio e la stima di oggi."],
+  ['pfn con il finanziamento soci', "PFN bancaria + finanziamento dei soci (contabile). È il debito finanziario complessivo, anche verso i soci."],
+  ['erario e inps da pagare', "Debiti tributari + previdenziali come registrati in NTS a fine mese (ritenute, IRAP, IVA, INPS, INAIL). Non comprende i piani AdER, che NTS non espone come debito. Più basso è meglio."],
+  ['costo del personale al mese', "Media mensile del costo del personale registrato negli ultimi mesi completi (salari, oneri, quiescenza), contro il personale 2025 comparabile (circa 248.400 € l'anno, dal riepilogo consolidato). I mesi con stipendi non ancora registrati sono esclusi."],
+  ['giorni di credito ai clienti', "Crediti verso clienti a fine mese ÷ ricavi degli ultimi 3 mesi × 91 giorni. Indicativo: i crediti comprendono IVA e saldi vecchi, i ricavi no. Serve per vedere se i clienti pagano più lentamente o più in fretta."],
+  ['margine di contribuzione', "(Ricavi − costi variabili) ÷ ricavi, progressivo da inizio anno. Costi variabili = acquisti di materie e merci, trasporti, lavorazioni e provvigioni come registrati: la variazione delle rimanenze non c'è, quindi il margine di prima nota è più alto del vero. Vale per la direzione, non per il livello."],
+  ['debito finanziario e pfn', "Per ogni fine mese: la barra è il debito lordo (finanziamenti, anticipi, scoperti di c/c, finanziamento soci), la linea nera la PFN bancaria (senza soci), la linea verde la liquidità. L'ultima colonna tratteggiata è la stima di oggi."],
+  ['ricavi per mese', "Ricavi registrati in ogni mese (IVA esclusa), con la media mobile a 3 mesi e la media mensile dell'anno prima."],
+  [/^ricavi per trimestre/, "Ricavi di ogni trimestre contro lo stesso trimestre dell'anno prima (registri vendite). Il trimestre in corso, se incompleto, è tratteggiato e non è confrontabile."],
+  ['margine di contribuzione e costi fissi', "Margine di contribuzione e costi fissi sommati da gennaio: quando la linea verde sta sopra quella rossa la gestione corrente copre i costi fissi (prima di rimanenze, ammortamenti, TFR e oneri finanziari)."],
+  ['costi fissi per mese', "Personale, servizi fissi, affitti e noleggi, altri oneri, mese per mese. Gli stipendi non ancora registrati sono aggiunti come stima (tratteggiati)."],
+  ['crediti verso clienti', "Fatture e RiBa aperte verso i clienti a fine mese, lorde (IVA compresa, comprese le fatture anticipate). Esclude il conto «Clienti c/fatture da emettere», che è un saldo di apertura mai movimentato."],
+  ['erario e inps', "Debiti verso Erario e INPS/INAIL a fine mese, come registrati in NTS."],
   // Pulsanti e funzioni
   ['oggi', "Situazione di oggi: liquidità, scoperti e anticipi, PFN, scaduto, prossimi 30 giorni e rate AdER."],
   ['crediti e debiti', "Fatture da incassare (clienti, proforme), da pagare (fornitori), movimenti già in banca e incassi/pagamenti segnati a mano."],
   ['scadenziario', "Rate di finanziamenti, F24, AdER e piani di rientro con scadenza, stato e conferma dei pagamenti."],
   ['banche e pfn', "Conti, scoperti, fidi, anticipi e castelletti, finanziamenti, PFN."],
   ['conto economico', "Ricavi, costi e margini per trimestre, come registrati in prima nota."],
+  ['andamento', "Come stanno cambiando nel tempo i numeri più importanti: debito finanziario e PFN, ricavi, margine, costi fissi, crediti, Erario e INPS. Mese per mese, con il confronto sul 2025 dove c'è."],
   ['stato dati', "Quando sono arrivati gli ultimi dati dal gestionale e che cosa manca o va controllato."],
   ['impostazioni', "Parametri, regole di incasso per cliente, mappa dei conti e team."],
   ['incassato', "Segna che il cliente ha pagato: l'importo entra subito nella liquidità stimata e la partita esce dai crediti. Resta «in attesa» finché NTS non lo registra, poi si chiude da solo. Se la banca importa lo stesso movimento, non si somma due volte."],
@@ -603,8 +620,8 @@ function etichette() {
 }
 function render() {
   if (!S.data) return;
-  const page = { oggi: pageOggi, partite: pagePartite, scadenziario: pageScadenziario, ce: pageCE, banche: pageBanche, stato: pageStato, impostazioni: pageImpostazioni }[S.view] || pageOggi;
-  const sc = window.scrollY; $('#app').innerHTML = shell(page()); etichette(); tooltips(); window.scrollTo(0, S._keepScroll ? sc : 0); S._keepScroll = false;
+  const page = { oggi: pageOggi, partite: pagePartite, scadenziario: pageScadenziario, ce: pageCE, andamento: pageAndamento, banche: pageBanche, stato: pageStato, impostazioni: pageImpostazioni }[S.view] || pageOggi;
+  const sc = window.scrollY; $('#app').innerHTML = shell(page()); etichette(); tooltips(); document.querySelectorAll('.scroll.gr').forEach(e => { e.scrollLeft = e.scrollWidth; }); window.scrollTo(0, S._keepScroll ? sc : 0); S._keepScroll = false;
   if (S._anchor) { const a = document.getElementById(S._anchor); S._anchor = null; if (a) a.scrollIntoView({ block: 'start' }); }
   const first = document.querySelector('.modal input:not([type=hidden]):not([type=checkbox]),.modal select');
   if (S.modal && S.modal.type === 'dilazione') UI.dilTot();
@@ -905,6 +922,184 @@ function pageCE() {
   return `<div class="head"><h2>Conto economico trimestrale</h2><span><select class="btn" onchange="UI.anno(this.value)">${anni.map(a => `<option value="${a}" ${a === S.annoCE ? 'selected' : ''}>${a}</option>`).join('')}</select></span></div>
   <div class="alert">Valori <b>come registrati in prima nota</b> (ricavi e costi di competenza, IVA esclusa), registrazioni fino al ${fmtD(S.data.stato.ultima_registrazione)}. Non includono ancora: stipendi e contributi del mese in corso (≈ ${eur(S.data.P.costo_personale_mese)} al mese), accantonamento TFR, variazione delle rimanenze (inventario di fine luglio e fine dicembre), ratei di fine anno. I consumi reali si leggono solo dopo l'inventario: storicamente valgono circa ${S.data.P.consumi_pct_storica || 43}% dei ricavi.</div>
   <div class="card">${tab}</div>${conf}`;
+}
+
+// ---------- Andamento ----------
+// Serie mensili dell'anno corrente. Conto economico: v_ce_mese. Stato patrimoniale: si cumula v_saldi_conti (dare − avere dall'inizio dei dati fino a fine mese), con le stesse regole di
+// posizione(): conti uniti, scoperti = c/c in rosso, anticipi = conti anticipi + SBF anticipati, liquidità = c/c attivi + accantonamenti + cassa.
+// Sono valori CONTABILI: seguono le registrazioni di NTS (che si fanno una volta al mese). L'ultimo punto «oggi» è la stima di Fiammetta (movimenti banca, saldi dichiarati dalla banca).
+// Riferimenti dell'anno prima (non sono in prima nota): bilancio depositato e registri vendite, dal «Riepilogo consolidato» del 06/11/2026.
+const RIF25 = { ricaviTrim: [348967, 127177, 225023, 304582], ricavi: 1005749, personaleComparabile: 248400, pfn: 346000 };
+const MESI3 = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+const MESI_NOME = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+const kk = v => v == null || isNaN(v) ? '' : Math.abs(v) >= 1000 ? (v / 1000).toFixed(Math.abs(v) >= 100000 ? 0 : 1).replace('.', ',') + 'k' : String(Math.round(v));
+const n1 = v => (Math.round(v * 10) / 10).toFixed(1).replace('.', ',');
+// variazione tra due valori: cls = good / bad / plain (stabile entro la soglia), buonoSeSu = true se l'aumento è un miglioramento
+function variaz(ora, prima, buonoSeSu, soglia) {
+  if (ora == null || prima == null || isNaN(ora) || isNaN(prima)) return null;
+  const d = ora - prima, p = prima ? 100 * d / Math.abs(prima) : 0, st = Math.abs(p) < (soglia == null ? 1 : soglia);
+  return { d, p, cls: st ? 'plain' : ((d > 0) === buonoSeSu ? 'good' : 'bad'), freccia: st ? '▬' : d > 0 ? '▲' : '▼', testo: (p > 0 ? '+' : p < 0 ? '−' : '') + n1(Math.abs(p)).replace(/^0,0$/, '0') + '%' };
+}
+const chipV = (x, dopo) => x ? `<span class="pill ${x.cls}">${x.freccia} ${x.testo}</span> ${dopo || ''}` : (dopo || '');
+function serieAndamento() {
+  const D = S.data, rows = D.saldiMese || [], A = Math.max(0, ...D.ce.map(r => r.anno));
+  let nM = Math.max(0, ...rows.filter(r => r.anno === A).map(r => r.mese), ...D.ce.filter(r => r.anno === A).map(r => r.mese)), parziale = null;
+  // il mese in corso di registrazione (registrazioni ferme prima della fine del mese) non entra nelle serie: darebbe ricavi e costi a metà e confronti sbagliati
+  const fineReg = String(D.stato.ultima_registrazione || '').slice(0, 10);
+  if (nM && fineReg && Number(fineReg.slice(0, 4)) === A && Number(fineReg.slice(5, 7)) === nM && Number(fineReg.slice(8, 10)) < new Date(A, nM, 0).getDate() - 4) { parziale = { mese: nM, fino: fineReg }; nM -= 1; }
+  if (!nM) return parziale ? { A, nM: 0, parziale } : null;
+  const M = Array.from({ length: nM }, (_, i) => i + 1);
+  const ce = f => M.map(m => sum(D.ce.filter(r => r.anno === A && r.mese === m && f(r)), r => Number(r.saldo) * r.segno));
+  const ric = ce(r => r.gruppo === 'RICAVI'), varc = ce(r => r.gruppo === 'COSTI_VARIABILI'), fis = ce(r => r.gruppo === 'COSTI_FISSI');
+  const pers = ce(r => r.voce === 'CE.PERSONALE'), serv = ce(r => r.voce === 'CE.SERVIZI_FISSI'), god = ce(r => r.voce === 'CE.GODIMENTO'), altri = fis.map((x, i) => x - pers[i] - serv[i] - god[i]);
+  // un mese con il personale registrato per meno della metà del solito ha gli stipendi non ancora registrati (NTS li registra dopo il prospetto dello studio): si stima con il costo mensile dei parametri
+  const ord = pers.filter(x => x > 0).sort((a, b) => a - b), med = ord.length ? ord[Math.floor(ord.length / 2)] : 0, costoMese = Number(D.P.costo_personale_mese) || med;
+  const persMancante = pers.map(x => med > 0 && x < 0.5 * med ? Math.max(0, costoMese - x) : 0);
+  const mdc = ric.map((x, i) => x - varc[i]), fisAdj = fis.map((x, i) => x + persMancante[i]);
+  const cumul = a => { let c = 0; return a.map(x => c += x); };
+  const ricC = cumul(ric), mdcC = cumul(mdc), fisC = cumul(fisAdj), margC = ricC.map((x, i) => x ? 100 * mdcC[i] / x : null);
+  // stato patrimoniale a fine mese
+  const perConto = {}, perVoce = {};
+  rows.forEach(r => { const k = r.anno * 100 + r.mese, c = Number(r.conto), v = r.voce === 'SP.CREDITI_CLIENTI' && /da emettere/i.test(r.descrizione || '') ? 'SP.CLIENTI_DA_EMETTERE' : (r.voce || ''); const a = (perConto[c] = perConto[c] || {}), b = (perVoce[v] = perVoce[v] || {}); a[k] = (a[k] || 0) + Number(r.saldo); b[k] = (b[k] || 0) + Number(r.saldo); });
+  const finoA = (t, m) => { let s = 0; if (t) for (const k in t) if (Number(k) <= A * 100 + m) s += t[k]; return s; };
+  const saldoConto = (c, m) => finoA(perConto[c], m), saldoVoce = (v, m) => finoA(perVoce[v], m);
+  const cat = Object.fromEntries(D.banche.map(b => [Number(b.conto), b.categoria])), uniti = (D.uniti || []).map(u => [Number(u.conto_unito), Number(u.conto_cc)]);
+  const pf = M.map(m => {
+    const righe = Object.keys(cat).map(c => ({ conto: Number(c), cat: cat[c], v: saldoConto(Number(c), m) }));
+    uniti.forEach(([u, cc]) => { const i = righe.findIndex(x => x.conto === u), r = righe.find(x => x.conto === cc); if (i < 0 || !r) return; r.v += righe.splice(i, 1)[0].v; });
+    const di = c => righe.filter(x => x.cat === c), tot = a => sum(a, x => x.v), cc = di('cc'), sbf = di('sbf');
+    const scop = -tot(cc.filter(x => x.v < 0)), liq = tot(cc.filter(x => x.v > 0)) + tot(di('accantonamento')) + tot(di('cassa')), ant = -tot(di('anticipi')) - tot(sbf.filter(x => x.v < 0));
+    const fin = -saldoVoce('SP.DEB_FINANZIAMENTI', m), soci = -saldoVoce('SP.DEB_SOCI', m);
+    return { fin, ant, scop, liq, soci, pfn: fin + ant + scop - liq };
+  });
+  // «Clienti c/fatture da emettere» è un saldo di apertura mai movimentato: non sono fatture emesse e aperte, quindi non entra nei crediti verso i clienti (si mostra a parte)
+  const crediti = M.map(m => saldoVoce('SP.CREDITI_CLIENTI', m)), daEmettere = M.map(m => saldoVoce('SP.CLIENTI_DA_EMETTERE', m)), trib = M.map(m => -saldoVoce('SP.DEB_TRIBUTARI', m)), prev = M.map(m => -saldoVoce('SP.DEB_PREVIDENZIALI', m));
+  const ric3 = M.map((m, i) => i >= 2 ? ric[i] + ric[i - 1] + ric[i - 2] : null), gg = M.map((m, i) => ric3[i] > 0 ? crediti[i] / ric3[i] * (365 / 4) : null);
+  const trim = [0, 1, 2, 3].map(q => ({ v: sum(ric.slice(3 * q, 3 * q + 3)), mesi: ric.slice(3 * q, 3 * q + 3).length })).filter(t => t.mesi > 0);
+  return { A, nM, M, ric, varc, fis, fisAdj, pers, serv, god, altri, persMancante, mdc, ricC, mdcC, fisC, margC, pf, crediti, daEmettere, trib, prev, ric3, gg, trim, costoMese, parziale };
+}
+// Grafico a barre (impilate o affiancate) e linee in SVG, senza librerie. o: { lab, bar:[{n,c,v,ghost:[indici]}], stack, line:[{n,c,v,dash}], ref:[{v,t,c}], etic:i=>testo, h }
+// Le colonne «ghost» (stima o dato incompleto) sono tratteggiate. Sul telefono il grafico scorre dentro la scheda, non la pagina.
+function svgGrafico(o) {
+  const W = 640, H = o.h || 250, L = 46, R = 12, T = 18, B = 28, n = o.lab.length, bars = o.bar || [], lines = o.line || [], stack = o.stack !== false;
+  const pos = i => stack ? sum(bars, b => Math.max(0, b.v[i] || 0)) : Math.max(0, ...bars.map(b => b.v[i] || 0)), neg = i => stack ? sum(bars, b => Math.min(0, b.v[i] || 0)) : Math.min(0, ...bars.map(b => b.v[i] || 0));
+  let hi = 0, lo = 0;
+  for (let i = 0; i < n; i++) { hi = Math.max(hi, pos(i)); lo = Math.min(lo, neg(i)); }
+  lines.forEach(l => l.v.forEach(x => { if (x != null) { hi = Math.max(hi, x); lo = Math.min(lo, x); } }));
+  (o.ref || []).forEach(r => { hi = Math.max(hi, r.v); lo = Math.min(lo, r.v); });
+  const nice = x => { const e = Math.pow(10, Math.floor(Math.log10(x || 1))), f = x / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e; };
+  const step = nice((hi - lo) / 4 || 1), top = Math.ceil(hi / step - 1e-9) * step, bot = Math.floor(lo / step + 1e-9) * step || 0, y = v => T + (H - T - B) * (1 - (v - bot) / ((top - bot) || 1));
+  const sx = (W - L - R) / n, cx = i => L + sx * (i + 0.5), bw = Math.min(46, sx * 0.66) / (stack ? 1 : Math.max(1, bars.length));
+  let g = '';
+  for (let t = bot; t <= top + step / 2; t += step) g += `<line x1="${L}" x2="${W - R}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}" stroke="${Math.abs(t) < 1e-9 ? '#9b8d7e' : '#e6dfd5'}" stroke-width="1"/><text x="${L - 6}" y="${(y(t) + 3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="#6f655a">${kk(t)}</text>`;
+  bars.forEach((b, bi) => b.v.forEach((val, i) => {
+    if (!val) return; const ghost = (b.ghost || []).includes(i);
+    let y0, y1;
+    if (stack) { const sotto = sum(bars.slice(0, bi), q => val >= 0 ? Math.max(0, q.v[i] || 0) : Math.min(0, q.v[i] || 0)); y0 = y(sotto); y1 = y(sotto + val); }
+    else { y0 = y(0); y1 = y(val); }
+    const x = stack ? cx(i) - bw / 2 : cx(i) - bw * bars.length / 2 + bw * bi;
+    g += `<rect x="${x.toFixed(1)}" y="${Math.min(y0, y1).toFixed(1)}" width="${(bw - (stack ? 0 : 1)).toFixed(1)}" height="${Math.max(0.5, Math.abs(y0 - y1)).toFixed(1)}" fill="${b.c}" ${ghost ? 'fill-opacity=".45" stroke="#5b4f44" stroke-dasharray="3 2" stroke-width="1"' : (stack && bi ? 'stroke="#fff" stroke-width=".6"' : '')}/>`;
+  }));
+  (o.ref || []).forEach(r => { g += `<line x1="${L}" x2="${W - R}" y1="${y(r.v).toFixed(1)}" y2="${y(r.v).toFixed(1)}" stroke="${r.c || '#7d6f61'}" stroke-width="1.3" stroke-dasharray="6 4"/>`; });
+  lines.forEach(l => {
+    let d = '', up = false; l.v.forEach((x, i) => { if (x == null) { up = false; return; } d += `${up ? 'L' : 'M'}${cx(i).toFixed(1)} ${y(x).toFixed(1)} `; up = true; });
+    g += `<path d="${d}" fill="none" stroke="${l.c}" stroke-width="2.2" ${l.dash ? 'stroke-dasharray="5 3"' : ''} stroke-linejoin="round"/>`;
+    l.v.forEach((x, i) => { if (x != null) g += `<circle cx="${cx(i).toFixed(1)}" cy="${y(x).toFixed(1)}" r="3" fill="#fff" stroke="${l.c}" stroke-width="1.8"/>`; });
+  });
+  for (let i = 0; i < n; i++) {
+    g += `<text x="${cx(i).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="11" fill="#6f655a">${esc(o.lab[i])}</text>`;
+    const e = o.etic ? o.etic(i) : null; if (e) g += `<text x="${cx(i).toFixed(1)}" y="${(y(Math.max(pos(i), 0)) - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="#3d342b">${esc(e)}</text>`;
+    const tip = [o.lab[i], ...bars.map(b => b.v[i] ? `${b.n}: ${eur(b.v[i])}` : null), ...lines.map(l => l.v[i] != null ? `${l.n}: ${eur(l.v[i])}` : null)].filter(Boolean).join('\n');
+    g += `<rect x="${(cx(i) - sx / 2).toFixed(1)}" y="${T}" width="${sx.toFixed(1)}" height="${H - T - B}" fill="transparent"><title>${esc(tip)}</title></rect>`;
+  }
+  const leg = [...bars.map(b => `<span><i class="sq" style="background:${b.c}"></i>${esc(b.n)}</span>`), ...lines.map(l => `<span><i class="ln" style="border-color:${l.c};${l.dash ? 'border-top-style:dashed' : ''}"></i>${esc(l.n)}</span>`), ...(o.ref || []).map(r => `<span><i class="ln" style="border-color:${r.c || '#7d6f61'};border-top-style:dashed"></i>${esc(r.t)}</span>`)].join('');
+  return `<div class="leg small">${leg}</div><div class="scroll gr"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.titolo || 'grafico')}" style="width:100%;min-width:520px;height:auto;display:block">${g}</svg></div><div class="small muted hint-scroll">scorri il grafico di lato per vedere tutti i mesi</div>`;
+}
+function pageAndamento() {
+  const D = S.data, head = `<div class="head"><h2>Andamento</h2></div>`;
+  // lo storico mensile dei conti si legge una volta sola per ogni invio dal gestionale (non a ogni aggiornamento della pagina)
+  const chiave = String(D.stato.ultimo_invio || '') + '|' + String(D.stato.ultima_registrazione || '');
+  if (S._andErr && S._andErr.k === chiave) return head + `<div class="alert bad">Non sono riuscita a leggere lo storico mensile dei conti: ${esc(S._andErr.msg)}.<br><button onclick="UI.andRiprova()">Riprova</button></div>`;
+  if (!S._saldiMese || S._saldiMese.k !== chiave) {
+    if (!S._andCarica) {
+      S._andCarica = true;
+      all('v_saldi_conti', q => q.order('anno').order('mese').order('conto')).then(r => { S._saldiMese = { k: chiave, rows: r }; S._andErr = null; })
+        .catch(e => { console.warn('storico andamento', e); S._andErr = { k: chiave, msg: e.message || String(e) }; })
+        .finally(() => { S._andCarica = false; if (S.view === 'andamento') { S._keepScroll = true; render(); } });
+    }
+    return head + '<div class="card">Leggo lo storico mensile dei conti…</div>';
+  }
+  D.saldiMese = S._saldiMese.rows;
+  const X = serieAndamento(); if (!X || !X.nM) return head + `<div class="card">${X && X.parziale ? `Il primo mese dell'anno è ancora in corso di registrazione (registrazioni fino al ${fmtD(X.parziale.fino)}): lo storico comparirà a mese completo.` : 'Nessuna registrazione contabile caricata: non c\'è ancora uno storico da mostrare.'}</div>`;
+  const { A, nM, M, pf } = X, pos = posizione(), last = nM - 1, lab = M.map(m => MESI3[m - 1]), nome = i => MESI_NOME[M[i] - 1], aMese = i => (/^a/.test(nome(i)) ? 'ad ' : 'a ') + nome(i), cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+  const fine = D.stato.ultima_registrazione, fineISO = String(fine || '').slice(0, 10);
+  const lag = D.banche.filter(b => ['cc', 'anticipi', 'sbf'].includes(b.categoria) && Math.abs(Number(b.saldo)) > 0.5 && b.ultima_registrazione && fineISO && giorni(String(b.ultima_registrazione).slice(0, 10), fineISO) > 15).sort((a, b) => String(a.ultima_registrazione).localeCompare(String(b.ultima_registrazione)));
+  const pfnT = pf.map(x => x.pfn + x.soci), ultimaPers = X.persMancante.map((x, i) => x > 0 ? i : -1).filter(i => i >= 0);
+  // ---- riquadri di lettura rapida
+  const nq = Math.floor(nM / 3), r3 = nM >= 6 ? variaz(sum(X.ric.slice(-3)), sum(X.ric.slice(-6, -3)), true, 2) : null;
+  const rYTD = nq >= 1 ? variaz(sum(X.ric.slice(0, 3 * nq)), sum(RIF25.ricaviTrim.slice(0, nq)), true, 2) : null;
+  const vPfn = variaz(pf[last].pfn, pf[0].pfn, false, 1), vTot = variaz(pfnT[last], pfnT[0], false, 1), vErar = variaz(X.trib[last] + X.prev[last], X.trib[0] + X.prev[0], false, 3);
+  const persOk = X.pers.map((x, i) => X.persMancante[i] ? null : x).filter(x => x != null), pers3 = persOk.length ? sum(persOk.slice(-3)) / Math.min(3, persOk.length) : null, vPers = variaz(pers3, RIF25.personaleComparabile / 12, false, 3);
+  const g0 = X.gg[last], g1 = last >= 5 ? X.gg[last - 3] : null, vGg = variaz(g0, g1, false, 3), vMarg = last >= 4 ? variaz(X.margC[last], X.margC[Math.max(2, last - 4)], true, 2) : null;
+  const punti = v => v ? `<span class="pill plain">${v.freccia} ${(v.d > 0 ? '+' : v.d < 0 ? '−' : '')}${n1(Math.abs(v.d))} punti</span>` : '';
+  const kpi = `<div class="card" style="margin-bottom:14px"><div class="row4">
+    ${kpiBox('Ricavi da inizio anno', eur(sum(X.ric)), nq >= 1 ? chipV(rYTD, `primi ${3 * nq} mesi: ${eur(sum(X.ric.slice(0, 3 * nq)))} contro ${eur(sum(RIF25.ricaviTrim.slice(0, nq)))} del ${A - 1}`) : `${nM} ${nM === 1 ? 'mese' : 'mesi'} registrati`)}
+    ${kpiBox('Ricavi ultimi 3 mesi', r3 ? eur(sum(X.ric.slice(-3))) : '–', r3 ? chipV(r3, `${MESI3[M[last] - 3]}–${MESI3[M[last] - 1]} contro i 3 mesi prima (${eur(sum(X.ric.slice(-6, -3)))})`) : 'servono almeno 6 mesi')}
+    ${kpiBox('PFN bancaria a fine ' + nome(last), eur(pf[last].pfn), chipV(vPfn, `contro ${eur(pf[0].pfn)} a fine gennaio (contabile) · oggi, stima: ${eur(pos.pfnStima)}`))}
+    ${kpiBox('PFN con il finanziamento soci', eur(pfnT[last]), chipV(vTot, `fine ${nome(last)}, contabile; soci ${eur(pf[last].soci)} contro ${eur(pf[0].soci)} a gennaio · oggi, stima: ${eur(pos.pfnTotStima)}`))}
+    ${kpiBox('Erario e INPS da pagare', eur(X.trib[last] + X.prev[last]), chipV(vErar, `fine ${nome(last)} contro ${eur(X.trib[0] + X.prev[0])} a gennaio (come registrato)`))}
+    ${kpiBox('Costo del personale al mese', pers3 == null ? '–' : eur(pers3), chipV(vPers, `media ultimi mesi completi contro ${eur(RIF25.personaleComparabile / 12)} nel ${A - 1} (comparabile)`))}
+    ${kpiBox('Giorni di credito ai clienti', g0 == null ? '–' : Math.round(g0) + ' giorni', g0 == null ? 'servono almeno 3 mesi' : chipV(vGg, `crediti ${eur(X.crediti[last])} ÷ ricavi ultimi 3 mesi · indicativo`))}
+    ${kpiBox('Margine di contribuzione', X.margC[last] == null ? '–' : n1(X.margC[last]) + '%', (vMarg ? punti(vMarg) + ` rispetto a fine ${nome(Math.max(2, last - 4))} · ` : '') + 'progressivo da inizio anno, prima della variazione delle rimanenze: indicativo')}
+  </div></div>`;
+  // ---- grafico del debito finanziario
+  const dMax = pf.reduce((m, x, i) => x.pfn > pf[m].pfn ? i : m, 0);
+  const lab3 = [...lab, 'oggi*'], gh = [nM], oggiP = { fin: pos.fin, ant: pos.s.anticipi, scop: pos.s.scoperti, liq: pos.s.liquidita, soci: pos.soci, pfn: pos.pfnStima };
+  const ser = c => [...pf.map(x => x[c]), oggiP[c]];
+  const cDebito = svgGrafico({ titolo: 'Debito finanziario e PFN mese per mese', lab: lab3, h: 280,
+    bar: [{ n: 'Finanziamenti e mutui', c: '#8d7f70', v: ser('fin'), ghost: gh }, { n: 'Anticipi', c: '#d9480f', v: ser('ant'), ghost: gh }, { n: 'Scoperti di c/c', c: '#c92a2a', v: ser('scop'), ghost: gh }, { n: 'Finanziamento soci', c: '#5b7fa6', v: ser('soci'), ghost: gh }],
+    line: [{ n: 'PFN bancaria (debito bancario − liquidità)', c: '#1f1b16', v: ser('pfn') }, { n: 'Liquidità', c: '#2b8a3e', v: ser('liq') }],
+    ref: [{ v: RIF25.pfn, t: `PFN bancaria al 31/12/${A - 1}: circa ${kk(RIF25.pfn)} (riepilogo consolidato)`, c: '#7d6f61' }],
+    etic: i => kk([...pf.map(x => x.fin + x.ant + x.scop + x.soci), oggiP.fin + oggiP.ant + oggiP.scop + oggiP.soci][i]) });
+  const letDebito = `A fine ${nome(last)} la PFN bancaria contabile è <b>${eur(pf[last].pfn)}</b>: ${vPfn.d <= 0 ? '' : '+'}${eur(vPfn.d)} rispetto a fine gennaio (${eur(pf[0].pfn)}). Il punto più alto è stato ${aMese(dMax)} (${eur(pf[dMax].pfn)}). Oggi la stima è ${eur(pos.pfnStima)} (movimenti della banca e saldi dichiarati da Cassa Padana: più recente del contabile). Il finanziamento soci (${eur(pf[last].soci)}, a gennaio ${eur(pf[0].soci)}) non è nella PFN bancaria: con i soci il debito finanziario è ${eur(pfnT[last])} (a gennaio ${eur(pfnT[0])}). La barra è il debito lordo, la linea nera il debito al netto della liquidità.`;
+  // ---- ricavi
+  const cRic = svgGrafico({ titolo: 'Ricavi per mese', lab, bar: [{ n: 'Ricavi del mese', c: '#d9480f', v: X.ric }], line: [{ n: 'Media dei 3 mesi (per mese)', c: '#1f1b16', v: X.ric3.map(x => x == null ? null : x / 3) }], ref: [{ v: RIF25.ricavi / 12, t: `media mensile ${A - 1}: ${kk(RIF25.ricavi / 12)}` }], etic: i => kk(X.ric[i]) });
+  const mBest = X.ric.indexOf(Math.max(...X.ric));
+  const letRic = `Da inizio anno ${eur(sum(X.ric))}. Ultimi tre mesi ${eur(sum(X.ric.slice(-3)))}${r3 ? ` (${r3.testo} sui tre mesi prima)` : ''}. Mese migliore: ${nome(mBest)} (${eur(X.ric[mBest])}). I ricavi sono IVA esclusa, di competenza del mese di registrazione.`;
+  const dT = X.trim.map((t, q) => variaz(t.v, RIF25.ricaviTrim[q], true, 2));
+  const cTrim = svgGrafico({ titolo: 'Ricavi per trimestre contro l\'anno prima', lab: ['T1', 'T2', 'T3', 'T4'], stack: false, bar: [{ n: String(A - 1), c: '#c9b9a6', v: RIF25.ricaviTrim }, { n: String(A), c: '#d9480f', v: [0, 1, 2, 3].map(q => X.trim[q] ? X.trim[q].v : 0), ghost: X.trim.map((t, q) => t.mesi < 3 ? q : -1).filter(q => q >= 0) }], etic: i => kk(RIF25.ricaviTrim[i]) });
+  const letTrim = X.trim.map((t, q) => `T${q + 1}: ${eur(t.v)} contro ${eur(RIF25.ricaviTrim[q])} (${dT[q].testo})${t.mesi < 3 ? ` — solo ${t.mesi} ${t.mesi === 1 ? 'mese' : 'mesi'}, non confrontabile` : ''}`).join(' · ') + `. ${A - 1}: registri vendite.`;
+  // ---- margine e costi fissi
+  const cMarg = svgGrafico({ titolo: 'Margine di contribuzione e costi fissi, progressivi', lab, line: [{ n: 'Margine di contribuzione (ricavi − costi variabili), cumulato', c: '#2b8a3e', v: X.mdcC }, { n: 'Costi fissi, cumulati', c: '#c92a2a', v: X.fisC }] });
+  const letMarg = `A fine ${nome(last)} il margine di contribuzione cumulato è ${eur(X.mdcC[last])} (${n1(X.margC[last])}% dei ricavi) e i costi fissi ${eur(X.fisC[last])}${ultimaPers.length ? ` (compreso il personale di ${ultimaPers.map(nome).join(', ')} non ancora registrato, stimato ${eur(sum(X.persMancante))})` : ''}: la differenza, <b>${eur(X.mdcC[last] - X.fisC[last])}</b>, è il risultato operativo <i>di prima nota</i>. Attenzione: è prima della variazione delle rimanenze (l'inventario è a luglio e dicembre), degli ammortamenti e del TFR, quindi è più alto del vero e non si confronta con l'EBITDA ${A - 1} di bilancio (61.975 €, 6,2%). Serve a vedere la direzione, non il livello.`;
+  // ---- costi fissi
+  const ghP = ultimaPers;
+  const cFissi = svgGrafico({ titolo: 'Costi fissi per mese', lab, bar: [{ n: 'Personale', c: '#d9480f', v: X.pers }, { n: 'Personale non ancora registrato (stima)', c: '#d9480f', v: X.persMancante, ghost: ghP }, { n: 'Servizi fissi', c: '#f59f00', v: X.serv }, { n: 'Affitti e noleggi', c: '#8d7f70', v: X.god }, { n: 'Altri oneri', c: '#c9b9a6', v: X.altri }], etic: i => kk(X.fisAdj[i]) });
+  const letFissi = `Costi fissi medi ${eur(sum(X.fisAdj) / nM)} al mese. Il personale registrato è ${pers3 == null ? '–' : eur(pers3)} al mese negli ultimi mesi completi, contro ${eur(RIF25.personaleComparabile / 12)} nel ${A - 1} (comparabile): ${vPers ? vPers.testo : ''}${ultimaPers.length ? `. ${cap(ultimaPers.map(nome).join(', '))}: stipendi non ancora registrati in NTS, aggiunta una stima di ${eur(X.costoMese)} (parametro «costo del personale al mese»)` : ''}.`;
+  // ---- crediti ai clienti
+  const cCred = svgGrafico({ titolo: 'Crediti verso clienti a fine mese', lab, bar: [{ n: 'Crediti verso clienti (fatture e RiBa aperte, lordi di IVA)', c: '#5b7fa6', v: X.crediti }], etic: i => kk(X.crediti[i]) });
+  const letCred = `Crediti lordi a fine ${nome(last)}: ${eur(X.crediti[last])} (a gennaio ${eur(X.crediti[0])}). ${g0 != null ? `Equivalgono a ${Math.round(g0)} giorni di ricavi degli ultimi 3 mesi${g1 != null ? ` (tre mesi prima ${Math.round(g1)})` : ''}: stima prudente, perché i crediti comprendono l'IVA e i ricavi no.` : ''} Comprendono le fatture anticipate (non sono nette dagli anticipi) e i saldi vecchi non ancora incassati.${Math.abs(X.daEmettere[last]) > 0.5 ? ` <b>Esclusi ${eur(X.daEmettere[last])}</b> del conto «Clienti c/fatture da emettere»: è un saldo di apertura del ${A} mai movimentato e non sono fatture aperte; da chiarire con Miriam a che cosa corrisponde.` : ''}`;
+  // ---- erario e INPS
+  const cErar = svgGrafico({ titolo: 'Debiti verso Erario e INPS a fine mese', lab, bar: [{ n: 'Debiti tributari', c: '#c92a2a', v: X.trib }, { n: 'Debiti previdenziali (INPS, INAIL)', c: '#e67700', v: X.prev }], etic: i => kk(X.trib[i] + X.prev[i]) });
+  const ader = sum(D.piani.filter(p => p.tipo === 'ader' && (p.stato || 'attivo') === 'attivo'), p => statoAder(p).residuo);
+  const letErar = `A fine ${nome(last)} ${eur(X.trib[last] + X.prev[last])} (a gennaio ${eur(X.trib[0] + X.prev[0])}): tributari ${eur(X.trib[last])}, previdenziali ${eur(X.prev[last])}. Sono i debiti come registrati in NTS: i versamenti F24 si registrano dopo l'estratto conto, quindi l'ultimo mese può essere più alto del reale.${ader > 0.5 ? ` A questi si aggiungono le rateizzazioni AdER (residuo di oggi ${eur(ader)}): NTS non le espone come debito perché le rate si registrano a costo quando si pagano.` : ''}`;
+  const card = (t, graf, lett, extra) => `<div class="card"><h3>${t}</h3>${graf}<div class="small" style="margin-top:8px">${lett}</div>${extra || ''}</div>`;
+  // ---- tabella dei numeri
+  const riga = (t, arr, ogg, cls) => `<tr class="${cls || ''}"><td>${t}</td>${arr.map(v => `<td class="num">${v == null ? '–' : eur(v)}</td>`).join('')}<td class="num">${ogg == null ? '' : eur(ogg)}</td></tr>`;
+  const tab = `<details class="piano" style="margin-top:14px"><summary><span class="nm">I numeri di tutti i grafici, mese per mese</span><span class="small muted">per le verifiche</span></summary><div class="body"><div class="scroll"><table class="ce"><tr><th>Voce</th>${lab.map(l => `<th class="num">${l}</th>`).join('')}<th class="num">oggi (stima)</th></tr>
+    ${riga('Ricavi del mese', X.ric)}${riga('Costi variabili', X.varc)}${riga('<b>Margine di contribuzione</b>', X.mdc, null, 'tot')}${riga('Costi fissi registrati', X.fis)}${riga('Personale non registrato (stima)', X.persMancante)}${riga('<b>Risultato operativo di prima nota</b>', X.mdc.map((x, i) => x - X.fisAdj[i]), null, 'tot')}
+    ${riga('Finanziamenti e mutui', pf.map(x => x.fin), oggiP.fin)}${riga('Anticipi', pf.map(x => x.ant), oggiP.ant)}${riga('Scoperti di c/c', pf.map(x => x.scop), oggiP.scop)}${riga('Liquidità', pf.map(x => x.liq), oggiP.liq)}${riga('<b>PFN bancaria</b>', pf.map(x => x.pfn), oggiP.pfn, 'tot')}${riga('Finanziamento soci', pf.map(x => x.soci), oggiP.soci)}${riga('<b>PFN con i soci</b>', pfnT, oggiP.pfn + oggiP.soci, 'tot')}
+    ${riga('Crediti verso clienti (fatture e RiBa aperte)', X.crediti)}${riga('Clienti c/fatture da emettere (esclusi dai crediti)', X.daEmettere)}<tr><td>Giorni di credito (indicativo)</td>${X.gg.map(v => `<td class="num">${v == null ? '–' : Math.round(v)}</td>`).join('')}<td></td></tr>${riga('Debiti tributari', X.trib)}${riga('Debiti previdenziali', X.prev)}
+  </table></div></div></details>`;
+  return `<div class="head"><h2>Andamento ${A}</h2><span class="small muted">mese per mese, da gennaio a ${nome(last)}</span></div>
+  <div class="alert"><b>Come leggere queste pagine.</b> Sono valori <b>contabili</b>: seguono le registrazioni di NTS (registrazioni fino al ${fmtD(fine)}), che Miriam fa una volta al mese dopo l'estratto conto. Il punto «oggi*» (tratteggiato) è la stima di Fiammetta e può discostarsi dall'ultimo mese contabile. L'anno prima non è in prima nota: i riferimenti ${A - 1} vengono dal bilancio depositato e dai registri vendite. Nei riquadri la freccia è verde se l'indice migliora, rossa se peggiora, grigia se è praticamente fermo.${X.parziale ? `<br><b>${cap(MESI_NOME[X.parziale.mese - 1])} è ancora in registrazione</b> (fino al ${fmtD(X.parziale.fino)}): entra nei grafici a mese completo; il punto «oggi*» lo comprende già.` : ''}${lag.length ? `<br><b>Conti con l'ultima registrazione più indietro del resto della contabilità</b> (se mancano movimenti, i saldi dei mesi recenti non li comprendono): ${lag.map(b => `${esc(b.descrizione)} al ${fmtD(b.ultima_registrazione)}`).join(' · ')}.` : ''}</div>
+  ${kpi}
+  <div class="stack">
+  ${card('Debito finanziario e PFN', cDebito, letDebito)}
+  <div class="rowg">${card('Ricavi per mese', cRic, letRic)}${card('Ricavi per trimestre contro ' + (A - 1), cTrim, letTrim)}</div>
+  <div class="rowg">${card('Margine di contribuzione e costi fissi', cMarg, letMarg)}${card('Costi fissi per mese', cFissi, letFissi)}</div>
+  <div class="rowg">${card('Crediti verso clienti', cCred, letCred)}${card('Erario e INPS', cErar, letErar)}</div>
+  </div>${tab}`;
 }
 
 // ---------- Banche e PFN ----------
@@ -1565,6 +1760,7 @@ const UI = {
   },
   goA(v, arg, anchor) { S._anchor = anchor; UI.go(v, arg); },
   partite(tab, filtro) { if (tab) { S.partite.tab = tab; S.partite.filtro = 'tutto'; S.partite.cerca = ''; } if (filtro) S.partite.filtro = filtro; render(); },
+  andRiprova() { S._andErr = null; S._keepScroll = true; render(); },
   pfFiltro(k) { S.partite.pfFiltro = k; S._keepScroll = true; render(); },
   dett(k) { S.dett = (k && S.dett !== k) ? k : null; S._keepScroll = true; render(); const el = document.getElementById('dett'); if (el && S.dett) { const r = el.getBoundingClientRect(); if (r.top > window.innerHeight * 0.75) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
   async fido(banca, linea, campo, valore) {
