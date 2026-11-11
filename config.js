@@ -4,5 +4,5 @@
 window.FIAMMETTA_CONFIG = {
   supabaseUrl: 'https://rfjepauymwfdhkcjnuqz.supabase.co',
   supabaseKey: 'sb_publishable_5m-_8_kDcGO5Nugj-vQjHw_wchWMQ9Z',
-  versione: '2.2 · 10/11/2026'
+  versione: '2.3 · 11/11/2026'
 };

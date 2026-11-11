@@ -539,13 +539,28 @@ const GL = [
   ['costi fissi per mese', "Personale, servizi fissi, affitti e noleggi, altri oneri, mese per mese. Gli stipendi non ancora registrati sono aggiunti come stima (tratteggiati)."],
   ['crediti verso clienti', "Fatture e RiBa aperte verso i clienti a fine mese, lorde (IVA compresa, comprese le fatture anticipate). Esclude il conto «Clienti c/fatture da emettere», che è un saldo di apertura mai movimentato."],
   ['erario e inps', "Debiti verso Erario e INPS/INAIL a fine mese, come registrati in NTS."],
+  // Andamento · anno su anno
+  [/^fatturato (gen|anno intero)/, "Fatture di vendita (tipo A e D, serie 00) meno le note di credito, IVA esclusa, per data fattura, negli stessi mesi dell'anno e dei due anni prima. 2024 e 2025 vengono dal vecchio gestionale, il 2026 da NTS. Nel 2025 il totale coincide con i registri vendite (scarto di 4 €)."],
+  [/^senza /, "Fatturato di tutti i clienti tranne il cliente principale (quello che ha fatturato di più nell'ultimo anno intero). Serve a capire se l'andamento dipende da lui o dal resto dei clienti."],
+  [/^peso di /, "Quota del fatturato fatta dal cliente principale. Più è bassa, meno si dipende da un solo cliente."],
+  ['clienti attivi', "Clienti con un fatturato netto positivo nel periodo (almeno una fattura, al netto delle note di credito)."],
+  ['fatture emesse', "Numero di fatture di vendita del periodo (note di credito escluse) e importo medio per fattura, IVA esclusa."],
+  ['quota estero', "Parte del fatturato fatta a clienti con paese diverso dall'Italia (paese in anagrafica NTS; se manca, prefisso della partita IVA). Non c'è un verso «migliore»: descrive la composizione."],
+  ['acquisti ogni 100 € fatturati', "Acquisti da fornitori (fatture, IVA esclusa) ÷ fatturato × 100, negli stessi mesi. Non è il margine: mancano le rimanenze e ci sono anche i servizi. 2024-2025 fatture di acquisto del vecchio gestionale, 2026 registro IVA acquisti. Più basso è meglio, salvo che il magazzino stia calando."],
+  ['pfn bancaria dal 1 gennaio', "PFN bancaria contabile a fine ultimo mese registrato contro il saldo di apertura dell'anno (caricato in NTS dal bilancio dell'anno prima), con lo stesso criterio di Fiammetta. Più bassa è meglio."],
+  ['fatturato da inizio anno, anni a confronto', "Fatturato progressivo mese dopo mese, una linea per anno: se la linea dell'anno in corso sta sopra quella dell'anno prima, si fattura di più a parità di mesi."],
+  ['fatturato per trimestre', "Fatturato di ogni trimestre, tre anni a confronto. Il trimestre in corso, se incompleto, è tratteggiato e non è confrontabile."],
+  ['da dove arriva il fatturato', "Fatturato del periodo diviso tra cliente principale, altri clienti esteri e clienti italiani, per anno."],
+  ['acquisti e fatturato', "Fatturato e acquisti da fornitori negli stessi mesi di ogni anno; la percentuale sopra le barre è il rapporto acquisti/fatturato."],
+  ['inizio anno contro oggi', "Debito finanziario, PFN, Erario e INPS e crediti al 1 gennaio (saldo di apertura NTS) contro l'ultimo mese registrato e la stima di oggi."],
+  ['anno per anno', "Gli indici principali per anno intero (2024, 2025) e per il periodo dell'anno in corso, con i confronti a parità di mesi."],
   // Pulsanti e funzioni
   ['oggi', "Situazione di oggi: liquidità, scoperti e anticipi, PFN, scaduto, prossimi 30 giorni e rate AdER."],
   ['crediti e debiti', "Fatture da incassare (clienti, proforme), da pagare (fornitori), movimenti già in banca e incassi/pagamenti segnati a mano."],
   ['scadenziario', "Rate di finanziamenti, F24, AdER e piani di rientro con scadenza, stato e conferma dei pagamenti."],
   ['banche e pfn', "Conti, scoperti, fidi, anticipi e castelletti, finanziamenti, PFN."],
   ['conto economico', "Ricavi, costi e margini per trimestre, come registrati in prima nota."],
-  ['andamento', "Come stanno cambiando nel tempo i numeri più importanti: debito finanziario e PFN, ricavi, margine, costi fissi, crediti, Erario e INPS. Mese per mese, con il confronto sul 2025 dove c'è."],
+  ['andamento', "Come stanno cambiando nel tempo i numeri più importanti: debito finanziario e PFN, ricavi, margine, costi fissi, crediti, Erario e INPS. Mese per mese (con il confronto sul 2025 dove c'è) e anno su anno (2024, 2025 e 2026 a parità di mesi)."],
   ['stato dati', "Quando sono arrivati gli ultimi dati dal gestionale e che cosa manca o va controllato."],
   ['impostazioni', "Parametri, regole di incasso per cliente, mappa dei conti e team."],
   ['incassato', "Segna che il cliente ha pagato: l'importo entra subito nella liquidità stimata e la partita esce dai crediti. Resta «in attesa» finché NTS non lo registra, poi si chiude da solo. Se la banca importa lo stesso movimento, non si somma due volte."],
@@ -941,6 +956,16 @@ function variaz(ora, prima, buonoSeSu, soglia) {
   return { d, p, cls: st ? 'plain' : ((d > 0) === buonoSeSu ? 'good' : 'bad'), freccia: st ? '▬' : d > 0 ? '▲' : '▼', testo: (p > 0 ? '+' : p < 0 ? '−' : '') + n1(Math.abs(p)).replace(/^0,0$/, '0') + '%' };
 }
 const chipV = (x, dopo) => x ? `<span class="pill ${x.cls}">${x.freccia} ${x.testo}</span> ${dopo || ''}` : (dopo || '');
+// debito finanziario, liquidità e PFN da due funzioni di saldo (per conto e per voce): regole di posizione() — conti uniti, scoperti = c/c in rosso, anticipi = conti anticipi + SBF anticipati, liquidità = c/c attivi + accantonamenti + cassa
+function pfDa(saldoConto, saldoVoce) {
+  const D = S.data, cat = Object.fromEntries(D.banche.map(b => [Number(b.conto), b.categoria])), uniti = (D.uniti || []).map(u => [Number(u.conto_unito), Number(u.conto_cc)]);
+  const righe = Object.keys(cat).map(c => ({ conto: Number(c), cat: cat[c], v: saldoConto(Number(c)) }));
+  uniti.forEach(([u, cc]) => { const i = righe.findIndex(x => x.conto === u), r = righe.find(x => x.conto === cc); if (i < 0 || !r) return; r.v += righe.splice(i, 1)[0].v; });
+  const di = c => righe.filter(x => x.cat === c), tot = a => sum(a, x => x.v), cc = di('cc'), sbf = di('sbf');
+  const scop = -tot(cc.filter(x => x.v < 0)), liq = tot(cc.filter(x => x.v > 0)) + tot(di('accantonamento')) + tot(di('cassa')), ant = -tot(di('anticipi')) - tot(sbf.filter(x => x.v < 0));
+  const fin = -saldoVoce('SP.DEB_FINANZIAMENTI'), soci = -saldoVoce('SP.DEB_SOCI');
+  return { fin, ant, scop, liq, soci, pfn: fin + ant + scop - liq };
+}
 function serieAndamento() {
   const D = S.data, rows = D.saldiMese || [], A = Math.max(0, ...D.ce.map(r => r.anno));
   let nM = Math.max(0, ...rows.filter(r => r.anno === A).map(r => r.mese), ...D.ce.filter(r => r.anno === A).map(r => r.mese)), parziale = null;
@@ -963,15 +988,7 @@ function serieAndamento() {
   rows.forEach(r => { const k = r.anno * 100 + r.mese, c = Number(r.conto), v = r.voce === 'SP.CREDITI_CLIENTI' && /da emettere/i.test(r.descrizione || '') ? 'SP.CLIENTI_DA_EMETTERE' : (r.voce || ''); const a = (perConto[c] = perConto[c] || {}), b = (perVoce[v] = perVoce[v] || {}); a[k] = (a[k] || 0) + Number(r.saldo); b[k] = (b[k] || 0) + Number(r.saldo); });
   const finoA = (t, m) => { let s = 0; if (t) for (const k in t) if (Number(k) <= A * 100 + m) s += t[k]; return s; };
   const saldoConto = (c, m) => finoA(perConto[c], m), saldoVoce = (v, m) => finoA(perVoce[v], m);
-  const cat = Object.fromEntries(D.banche.map(b => [Number(b.conto), b.categoria])), uniti = (D.uniti || []).map(u => [Number(u.conto_unito), Number(u.conto_cc)]);
-  const pf = M.map(m => {
-    const righe = Object.keys(cat).map(c => ({ conto: Number(c), cat: cat[c], v: saldoConto(Number(c), m) }));
-    uniti.forEach(([u, cc]) => { const i = righe.findIndex(x => x.conto === u), r = righe.find(x => x.conto === cc); if (i < 0 || !r) return; r.v += righe.splice(i, 1)[0].v; });
-    const di = c => righe.filter(x => x.cat === c), tot = a => sum(a, x => x.v), cc = di('cc'), sbf = di('sbf');
-    const scop = -tot(cc.filter(x => x.v < 0)), liq = tot(cc.filter(x => x.v > 0)) + tot(di('accantonamento')) + tot(di('cassa')), ant = -tot(di('anticipi')) - tot(sbf.filter(x => x.v < 0));
-    const fin = -saldoVoce('SP.DEB_FINANZIAMENTI', m), soci = -saldoVoce('SP.DEB_SOCI', m);
-    return { fin, ant, scop, liq, soci, pfn: fin + ant + scop - liq };
-  });
+  const pf = M.map(m => pfDa(c => saldoConto(c, m), v => saldoVoce(v, m)));
   // «Clienti c/fatture da emettere» è un saldo di apertura mai movimentato: non sono fatture emesse e aperte, quindi non entra nei crediti verso i clienti (si mostra a parte)
   const crediti = M.map(m => saldoVoce('SP.CREDITI_CLIENTI', m)), daEmettere = M.map(m => saldoVoce('SP.CLIENTI_DA_EMETTERE', m)), trib = M.map(m => -saldoVoce('SP.DEB_TRIBUTARI', m)), prev = M.map(m => -saldoVoce('SP.DEB_PREVIDENZIALI', m));
   const ric3 = M.map((m, i) => i >= 2 ? ric[i] + ric[i - 1] + ric[i - 2] : null), gg = M.map((m, i) => ric3[i] > 0 ? crediti[i] / ric3[i] * (365 / 4) : null);
@@ -1015,11 +1032,10 @@ function svgGrafico(o) {
   const leg = [...bars.map(b => `<span><i class="sq" style="background:${b.c}"></i>${esc(b.n)}</span>`), ...lines.map(l => `<span><i class="ln" style="border-color:${l.c};${l.dash ? 'border-top-style:dashed' : ''}"></i>${esc(l.n)}</span>`), ...(o.ref || []).map(r => `<span><i class="ln" style="border-color:${r.c || '#7d6f61'};border-top-style:dashed"></i>${esc(r.t)}</span>`)].join('');
   return `<div class="leg small">${leg}</div><div class="scroll gr"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.titolo || 'grafico')}" style="width:100%;min-width:520px;height:auto;display:block">${g}</svg></div><div class="small muted hint-scroll">scorri il grafico di lato per vedere tutti i mesi</div>`;
 }
-function pageAndamento() {
-  const D = S.data, head = `<div class="head"><h2>Andamento</h2></div>`;
-  // lo storico mensile dei conti si legge una volta sola per ogni invio dal gestionale (non a ogni aggiornamento della pagina)
-  const chiave = String(D.stato.ultimo_invio || '') + '|' + String(D.stato.ultima_registrazione || '');
-  if (S._andErr && S._andErr.k === chiave) return head + `<div class="alert bad">Non sono riuscita a leggere lo storico mensile dei conti: ${esc(S._andErr.msg)}.<br><button onclick="UI.andRiprova()">Riprova</button></div>`;
+// storico mensile dei conti: si legge una volta sola per ogni invio dal gestionale (non a ogni aggiornamento della pagina). Restituisce il testo da mostrare finché non è pronto (null = pronto)
+function assicuraSaldiMese(testa) {
+  const D = S.data, chiave = String(D.stato.ultimo_invio || '') + '|' + String(D.stato.ultima_registrazione || '');
+  if (S._andErr && S._andErr.k === chiave) return testa + `<div class="alert bad">Non sono riuscita a leggere lo storico mensile dei conti: ${esc(S._andErr.msg)}.<br><button onclick="UI.andRiprova()">Riprova</button></div>`;
   if (!S._saldiMese || S._saldiMese.k !== chiave) {
     if (!S._andCarica) {
       S._andCarica = true;
@@ -1027,9 +1043,13 @@ function pageAndamento() {
         .catch(e => { console.warn('storico andamento', e); S._andErr = { k: chiave, msg: e.message || String(e) }; })
         .finally(() => { S._andCarica = false; if (S.view === 'andamento') { S._keepScroll = true; render(); } });
     }
-    return head + '<div class="card">Leggo lo storico mensile dei conti…</div>';
+    return testa + '<div class="card">Leggo lo storico mensile dei conti…</div>';
   }
-  D.saldiMese = S._saldiMese.rows;
+  D.saldiMese = S._saldiMese.rows; return null;
+}
+function pageAndamentoMese() {
+  const D = S.data, head = `<div class="head"><h2>Andamento</h2></div>${andTabs()}`;
+  const att = assicuraSaldiMese(head); if (att) return att;
   const X = serieAndamento(); if (!X || !X.nM) return head + `<div class="card">${X && X.parziale ? `Il primo mese dell'anno è ancora in corso di registrazione (registrazioni fino al ${fmtD(X.parziale.fino)}): lo storico comparirà a mese completo.` : 'Nessuna registrazione contabile caricata: non c\'è ancora uno storico da mostrare.'}</div>`;
   const { A, nM, M, pf } = X, pos = posizione(), last = nM - 1, lab = M.map(m => MESI3[m - 1]), nome = i => MESI_NOME[M[i] - 1], aMese = i => (/^a/.test(nome(i)) ? 'ad ' : 'a ') + nome(i), cap = t => t.charAt(0).toUpperCase() + t.slice(1);
   const fine = D.stato.ultima_registrazione, fineISO = String(fine || '').slice(0, 10);
@@ -1091,7 +1111,7 @@ function pageAndamento() {
     ${riga('Finanziamenti e mutui', pf.map(x => x.fin), oggiP.fin)}${riga('Anticipi', pf.map(x => x.ant), oggiP.ant)}${riga('Scoperti di c/c', pf.map(x => x.scop), oggiP.scop)}${riga('Liquidità', pf.map(x => x.liq), oggiP.liq)}${riga('<b>PFN bancaria</b>', pf.map(x => x.pfn), oggiP.pfn, 'tot')}${riga('Finanziamento soci', pf.map(x => x.soci), oggiP.soci)}${riga('<b>PFN con i soci</b>', pfnT, oggiP.pfn + oggiP.soci, 'tot')}
     ${riga('Crediti verso clienti (fatture e RiBa aperte)', X.crediti)}${riga('Clienti c/fatture da emettere (esclusi dai crediti)', X.daEmettere)}<tr><td>Giorni di credito (indicativo)</td>${X.gg.map(v => `<td class="num">${v == null ? '–' : Math.round(v)}</td>`).join('')}<td></td></tr>${riga('Debiti tributari', X.trib)}${riga('Debiti previdenziali', X.prev)}
   </table></div></div></details>`;
-  return `<div class="head"><h2>Andamento ${A}</h2><span class="small muted">mese per mese, da gennaio a ${nome(last)}</span></div>
+  return `<div class="head"><h2>Andamento ${A}</h2><span class="small muted">mese per mese, da gennaio a ${nome(last)}</span></div>${andTabs()}
   <div class="alert"><b>Come leggere queste pagine.</b> Sono valori <b>contabili</b>: seguono le registrazioni di NTS (registrazioni fino al ${fmtD(fine)}), che Miriam fa una volta al mese dopo l'estratto conto. Il punto «oggi*» (tratteggiato) è la stima di Fiammetta e può discostarsi dall'ultimo mese contabile. L'anno prima non è in prima nota: i riferimenti ${A - 1} vengono dal bilancio depositato e dai registri vendite. Nei riquadri la freccia è verde se l'indice migliora, rossa se peggiora, grigia se è praticamente fermo.${X.parziale ? `<br><b>${cap(MESI_NOME[X.parziale.mese - 1])} è ancora in registrazione</b> (fino al ${fmtD(X.parziale.fino)}): entra nei grafici a mese completo; il punto «oggi*» lo comprende già.` : ''}${lag.length ? `<br><b>Conti con l'ultima registrazione più indietro del resto della contabilità</b> (se mancano movimenti, i saldi dei mesi recenti non li comprendono): ${lag.map(b => `${esc(b.descrizione)} al ${fmtD(b.ultima_registrazione)}`).join(' · ')}.` : ''}</div>
   ${kpi}
   <div class="stack">
@@ -1101,6 +1121,195 @@ function pageAndamento() {
   <div class="rowg">${card('Crediti verso clienti', cCred, letCred)}${card('Erario e INPS', cErar, letErar)}</div>
   </div>${tab}`;
 }
+
+// ---------- Anno su anno ----------
+// Confronto tra anni: «l'andamento di anno in anno è migliorato?». Si confrontano gli STESSI mesi (gen–ultimo mese completo), così la stagionalità non falsa il confronto.
+// Fonti:
+//  · fatturato = fatture di vendita (tipo A e D, serie 00) meno note di credito (N): erp_documenti — 2024 e 2025 dal vecchio gestionale (OLDMAGIKAL), dal 2026 da NTS. Nel 2025 coincide con i registri vendite.
+//  · acquisti = fatture dei fornitori, imponibile: 2024 e 2025 tipo L del vecchio gestionale; dal 2026 il registro IVA acquisti (erp_moviva), perché in NTS la fattura di acquisto si registra in prima nota senza documento.
+//  · paese dei clienti: erp_conti. Inizio anno: saldi di apertura in prima nota (erp_prinot, causali 4999 «prima apertura» e 4063 «riapertura dei conti»).
+//  · la contabilità 2024-2025 NON è in NTS (parte dal 1° gennaio 2026): per quegli anni si usano solo i numeri del bilancio depositato qui sotto. Dal 2027 il conto economico si confronta direttamente dalla prima nota.
+const STORICO = { 2024: { utile: 23098 }, 2025: { ricavi: 1006028, personale: 285362, ebitda: 61975, utile: 8194 } };
+const COL_ANNO = ['#c9b9a6', '#8d7f70', '#d9480f']; // anno − 2, anno − 1, anno in corso
+const annoRif = () => { const o = new Date(), m = o.getMonth(); return m < 1 ? { A: o.getFullYear() - 1, nM: 12 } : { A: o.getFullYear(), nM: m }; };
+const nomeCli = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/(^|[\s.(])([a-zà-ù])/g, (m, p, c) => p + c.toUpperCase());
+const andTabs = () => `<div class="tabs" style="margin:0 0 12px">${[['mese', 'Mese per mese'], ['anno', 'Anno su anno']].map(([k, l]) => `<button class="${(S.andTab || 'mese') === k ? 'on' : ''}" onclick="UI.andTab('${k}')">${l}</button>`).join('')}</div>`;
+async function allCols(table, cols, build) {
+  let out = [], from = 0; const page = 1000;
+  for (;;) {
+    let q = S.sb.from(table).select(cols); if (build) q = build(q);
+    const { data, error } = await q.range(from, from + page - 1);
+    if (error) throw error;
+    out = out.concat(data || []); if (!data || data.length < page) break; from += page;
+  }
+  return out;
+}
+async function caricaAnno(chiave) {
+  const { A } = annoRif(), da = (new Date().getFullYear() - 3) + '-01-01';
+  const [docs, cli, iva, ap] = await Promise.all([
+    allCols('erp_documenti', 'chiave,tipork,serie,datdoc,conto,tipo_cf,imponibile', q => q.in('tipork', ['A', 'D', 'N', 'L']).gte('datdoc', da).order('chiave')),
+    allCols('erp_conti', 'conto,descrizione,paese,piva', q => q.eq('tipo', 'C').order('conto')),
+    allCols('erp_moviva', 'chiave,datreg,imponib', q => q.eq('tregiva', 'A').order('chiave')),
+    allCols('erp_prinot', 'conto,dare,avere', q => q.eq('datreg', A + '-01-01').in('causale', [4999, 4063]).order('numreg').order('riga'))
+  ]);
+  S._annoDati = { k: chiave, docs, cli, iva, ap };
+}
+// restituisce il testo da mostrare finché i dati non sono pronti (null = pronti)
+function assicuraAnno(testa) {
+  const D = S.data, k = String(D.stato.ultimo_invio || '') + '|' + String(D.stato.ultima_registrazione || '');
+  if (S._annoErr && S._annoErr.k === k) return testa + `<div class="alert bad">Non sono riuscita a leggere le fatture degli anni scorsi: ${esc(S._annoErr.msg)}.<br><button onclick="UI.annoRiprova()">Riprova</button></div>`;
+  if (!S._annoDati || S._annoDati.k !== k) {
+    if (!S._annoCarica) {
+      S._annoCarica = true;
+      caricaAnno(k).then(() => { S._annoErr = null; }).catch(e => { console.warn('anno su anno', e); S._annoErr = { k, msg: e.message || String(e) }; })
+        .finally(() => { S._annoCarica = false; if (S.view === 'andamento') { S._keepScroll = true; render(); } });
+    }
+    return testa + '<div class="card">Leggo le fatture degli ultimi anni…</div>';
+  }
+  return null;
+}
+function calcAnno() {
+  const R = S._annoDati; if (!R) return null;
+  const { A, nM } = annoRif(), anni = [A - 2, A - 1, A], cli = new Map(R.cli.map(c => [Number(c.conto), c]));
+  // estero = paese diverso da Italia (sigle I / IT o vuoto); se manca il paese, si guarda il prefisso della partita IVA
+  const estero = c => { const x = cli.get(Number(c)); if (!x) return false; const p = String(x.paese || '').trim().toUpperCase(); if (p) return p !== 'I' && p !== 'IT'; const v = String(x.piva || '').trim().toUpperCase(); return /^[A-Z]{2}/.test(v) && !v.startsWith('IT'); };
+  const Z = () => Array(12).fill(0), fat = {}, lor = {}, nf = {}, aDoc = {}, aIva = {}, cl = {};
+  anni.forEach(y => { fat[y] = Z(); lor[y] = Z(); nf[y] = Z(); aDoc[y] = Z(); aIva[y] = Z(); cl[y] = {}; });
+  R.docs.forEach(d => {
+    const y = Number(String(d.datdoc).slice(0, 4)), m = Number(String(d.datdoc).slice(5, 7)) - 1; if (!fat[y] || !(m >= 0)) return;
+    const imp = Number(d.imponibile) || 0, ven = (d.tipork === 'A' || d.tipork === 'D') && String(d.serie).trim() === '00', nc = d.tipork === 'N' && d.tipo_cf === 'C';
+    if (ven || nc) { const v = nc ? -imp : imp; fat[y][m] += v; if (ven) { nf[y][m]++; lor[y][m] += imp; } const c = Number(d.conto); (cl[y][c] = cl[y][c] || Z())[m] += v; }
+    else if (d.tipork === 'L') aDoc[y][m] += imp;
+  });
+  const conIva = new Set();
+  R.iva.forEach(r => { const y = Number(String(r.datreg).slice(0, 4)), m = Number(String(r.datreg).slice(5, 7)) - 1; if (!aIva[y] || !(m >= 0)) return; aIva[y][m] += Number(r.imponib) || 0; conIva.add(y); });
+  const acq = {}, fonte = {};
+  anni.forEach(y => { if (conIva.has(y)) { acq[y] = aIva[y]; fonte[y] = 'iva'; } else if (sum(aDoc[y]) > 0) { acq[y] = aDoc[y]; fonte[y] = 'doc'; } else acq[y] = null; });
+  const ytd = a => a ? sum(a.slice(0, nM)) : null;
+  // il cliente principale è quello che ha fatturato di più nell'ultimo anno intero disponibile
+  const base = [A - 1, A - 2, A].find(y => sum(fat[y]) > 0), tot1 = Object.entries(cl[base] || {}).map(([c, a]) => [Number(c), sum(a)]).sort((p, q) => q[1] - p[1]), pc = tot1.length ? tot1[0][0] : null;
+  const nomeDi = c => nomeCli((cli.get(Number(c)) || {}).descrizione || String(c));
+  const R1 = {};
+  anni.forEach(y => {
+    const f = ytd(fat[y]), per = Object.entries(cl[y]).map(([c, a]) => [Number(c), sum(a.slice(0, nM))]).filter(([, v]) => Math.abs(v) > 0.005).sort((p, q) => q[1] - p[1]);
+    const ven = sum(nf[y].slice(0, nM)), pcv = (per.find(p => p[0] === pc) || [0, 0])[1], a = acq[y], ay = ytd(a);
+    R1[y] = { ha: sum(fat[y]) !== 0, f, fAnno: sum(fat[y]), ven, medio: ven ? sum(lor[y].slice(0, nM)) / ven : null, nCli: per.filter(p => p[1] > 0).length,
+      est: f > 0 ? 100 * sum(per.filter(p => estero(p[0])), p => p[1]) / f : null, estAltri: sum(per.filter(p => p[0] !== pc && estero(p[0])), p => p[1]), itAltri: sum(per.filter(p => p[0] !== pc && !estero(p[0])), p => p[1]), pcv, quota: f > 0 ? 100 * pcv / f : null, senza: f - pcv, top5: f > 0 ? 100 * sum(per.slice(0, 5), p => p[1]) / f : null, top: per.slice(0, 5),
+      acq: ay, acqAnno: a ? sum(a) : null, rapp: ay != null && f > 0 ? 100 * ay / f : null, rappAnno: a && sum(fat[y]) > 0 ? 100 * sum(a) / sum(fat[y]) : null };
+  });
+  return { A, nM, anni, fat, nf, acq, fonte, R1, pc, pcNome: pc ? nomeDi(pc) : null, nomeDi };
+}
+// saldi di apertura dell'anno (prima nota, causali di apertura): stesse regole di serieAndamento per debito, liquidità, Erario e crediti
+function fotoApertura(ap) {
+  const D = S.data, info = {}; (D.saldiMese || []).forEach(r => { if (!info[r.conto]) info[r.conto] = r; });
+  const perConto = {}, perVoce = {};
+  ap.forEach(r => { const c = Number(r.conto), s = Number(r.dare) - Number(r.avere), i = info[c] || {}, v = i.voce === 'SP.CREDITI_CLIENTI' && /da emettere/i.test(i.descrizione || '') ? 'SP.CLIENTI_DA_EMETTERE' : (i.voce || ''); perConto[c] = (perConto[c] || 0) + s; perVoce[v] = (perVoce[v] || 0) + s; });
+  const p = pfDa(c => perConto[c] || 0, v => perVoce[v] || 0);
+  return { ...p, trib: -(perVoce['SP.DEB_TRIBUTARI'] || 0), prev: -(perVoce['SP.DEB_PREVIDENZIALI'] || 0), crediti: perVoce['SP.CREDITI_CLIENTI'] || 0, daEmettere: perVoce['SP.CLIENTI_DA_EMETTERE'] || 0 };
+}
+function pageAnnoSuAnno() {
+  const D = S.data, testa = `<div class="head"><h2>Andamento · anno su anno</h2></div>${andTabs()}`;
+  const att1 = assicuraAnno(testa), att2 = assicuraSaldiMese(testa), att = att1 || att2; if (att) return att;
+  const C = calcAnno(), { A, nM, anni, R1 } = C, a0 = A - 2, a1 = A - 1, y = R1[A], p = R1[a1], q = R1[a0], pc = C.pcNome;
+  if (!anni.some(a => R1[a].ha)) return testa + '<div class="card">Non ci sono ancora fatture da confrontare.</div>';
+  const mese = MESI_NOME[nM - 1], lab = nM >= 12 ? 'anno intero' : nM === 1 ? 'gennaio' : 'gen–' + MESI3[nM - 1];
+  const hasP = p.ha, hasQ = q.ha;
+  const punti = (ora, prima, buonoSeSu, neutro) => { const v = variaz(ora, prima, buonoSeSu, 1); return v ? `<span class="pill ${neutro ? 'plain' : v.cls}">${v.freccia} ${(v.d > 0 ? '+' : v.d < 0 ? '−' : '')}${n1(Math.abs(v.d))} punti</span> ` : ''; };
+  const n0p = v => v == null ? '–' : n1(v) + '%';
+  // ---- bilancio: apertura, fine ultimo mese contabile, oggi
+  const X = serieAndamento(), pos = posizione(), ap = D.saldiMese && S._annoDati.ap.length && X && X.nM && X.A === A ? fotoApertura(S._annoDati.ap) : null, last = X && X.nM ? X.nM - 1 : null, cn = ap && last != null ? X.pf[last] : null;
+  const nomeX = X && X.nM ? MESI_NOME[X.nM - 1] : '';
+  // ---- riquadri
+  const vF = variaz(y.f, p.f, true, 2), vS = variaz(y.senza, p.senza, true, 2), vN = variaz(y.nCli, p.nCli, true, 2), vV = variaz(y.ven, p.ven, true, 2), vM = variaz(y.medio, p.medio, true, 2);
+  const kpi = `<div class="card" style="margin-bottom:14px"><div class="row4">
+    ${kpiBox('Fatturato ' + lab, eur(y.f), chipV(hasP ? vF : null, `contro ${hasP ? eur(p.f) : '–'} nel ${a1}${hasQ ? ` e ${eur(q.f)} nel ${a0}` : ''} · fatture meno note di credito, IVA esclusa`))}
+    ${pc ? kpiBox('Senza ' + pc, eur(y.senza), chipV(hasP ? vS : null, `contro ${hasP ? eur(p.senza) : '–'} nel ${a1}${hasQ ? ` e ${eur(q.senza)} nel ${a0}` : ''} · tutti gli altri clienti insieme`)) : ''}
+    ${pc ? kpiBox('Peso di ' + pc, n0p(y.quota), (hasP ? punti(y.quota, p.quota, false) : '') + `rispetto al ${a1} (${n0p(p.quota)})${hasQ ? `; ${a0}: ${n0p(q.quota)}` : ''} · quota del fatturato, meno è meglio`) : ''}
+    ${kpiBox('Clienti attivi', String(y.nCli), chipV(hasP ? vN : null, `che hanno comprato ${lab}, contro ${hasP ? p.nCli : '–'} nel ${a1}${hasQ ? ` e ${q.nCli} nel ${a0}` : ''}`))}
+    ${kpiBox('Fatture emesse', String(y.ven), chipV(hasP ? vV : null, `importo medio ${eur(y.medio)} contro ${hasP ? eur(p.medio) : '–'} nel ${a1}${hasP && vM ? ` (${vM.testo})` : ''}`))}
+    ${kpiBox('Quota estero', n0p(y.est), (hasP ? punti(y.est, p.est, true, true) : '') + `rispetto al ${a1} (${n0p(p.est)})${hasQ ? `; ${a0}: ${n0p(q.est)}` : ''} · quota del fatturato`)}
+    ${kpiBox('Acquisti ogni 100 € fatturati', y.rapp == null ? '–' : n1(y.rapp) + ' €', (hasP && p.rapp != null && y.rapp != null ? punti(y.rapp, p.rapp, false) : '') + `rispetto al ${a1} (${p.rapp != null ? n1(p.rapp) + ' €' : '–'})${hasQ && q.rapp != null ? `; ${a0}: ${n1(q.rapp)} €` : ''} · ${lab}, non è il margine`)}
+    ${cn ? kpiBox('PFN bancaria dal 1 gennaio', eur(cn.pfn), chipV(variaz(cn.pfn, ap.pfn, false, 1), `a fine ${nomeX} (contabile) contro ${eur(ap.pfn)} al 1 gennaio, stesso criterio · oggi, stima: ${eur(pos.pfnStima)}`)) : kpiBox('PFN bancaria dal 1 gennaio', '–', 'servono i saldi di apertura e almeno un mese registrato')}
+  </div></div>`;
+  // ---- sintesi
+  const fr = (a, b) => { const v = variaz(a, b, true, 0); return v ? v.testo : ''; };
+  const sint = [];
+  if (hasP) sint.push(`Fatturato ${lab} ${A}: <b>${eur(y.f)}</b>, ${fr(y.f, p.f)} sul ${a1} (${eur(p.f)})${hasQ ? ` e ${fr(y.f, q.f)} sul ${a0} (${eur(q.f)})` : ''}.`);
+  if (hasP && pc) sint.push(`${pc} pesava il ${n0p(p.quota)} nel ${a1} e pesa il ${n0p(y.quota)} nel ${A}; senza di lui il fatturato è ${eur(y.senza)} contro ${eur(p.senza)} (${fr(y.senza, p.senza)}).`);
+  if (hasP && p.rapp != null && y.rapp != null) sint.push(`Gli acquisti ${lab} sono ${eur(y.acq)} contro ${eur(p.acq)} (${fr(y.acq, p.acq)}): ${n1(y.rapp)} € ogni 100 € fatturati contro ${n1(p.rapp)}.`);
+  if (cn) sint.push(`La PFN bancaria contabile è ${eur(cn.pfn)} a fine ${nomeX} contro ${eur(ap.pfn)} al 1 gennaio (${fr(cn.pfn, ap.pfn)}).`);
+  const giud = hasP ? [['fatturato', vF], ['fatturato senza ' + pc, pc ? vS : null], ['peso del cliente principale', pc ? variaz(y.quota, p.quota, false, 1) : null], ['clienti attivi', vN], ['fatture emesse', vV], ['acquisti ogni 100 € fatturati', p.rapp != null && y.rapp != null ? variaz(y.rapp, p.rapp, false, 1) : null], ['PFN bancaria', cn ? variaz(cn.pfn, ap.pfn, false, 1) : null]].filter(([, v]) => v) : [];
+  const nmG = c => giud.filter(([, v]) => v.cls === c).map(([n]) => n);
+  if (giud.length) sint.unshift(`Su ${giud.length} indici valutabili: <b>${nmG('good').length} ${nmG('good').length === 1 ? 'migliora' : 'migliorano'}</b>${nmG('good').length ? ' (' + nmG('good').join(', ') + ')' : ''}, <b>${nmG('bad').length} ${nmG('bad').length === 1 ? 'peggiora' : 'peggiorano'}</b>${nmG('bad').length ? ' (' + nmG('bad').join(', ') + ')' : ''}${nmG('plain').length ? `, ${nmG('plain').length} ${nmG('plain').length === 1 ? 'stabile' : 'stabili'} (${nmG('plain').join(', ')})` : ''}. Confronto a parità di mesi con il ${a1}; la PFN contro il 1 gennaio.`);
+  // ---- fatturato cumulato
+  const cum = a => { let c = 0; return C.fat[a].map((v, m) => (a === A && m >= nM) ? null : (c += v)); };
+  const lineeC = anni.map((a, i) => R1[a].ha ? { n: String(a), c: COL_ANNO[i], v: cum(a) } : null).filter(Boolean);
+  const cCum = svgGrafico({ titolo: 'Fatturato da inizio anno, cumulato, anni a confronto', lab: MESI3, h: 240, line: lineeC });
+  const rimane = hasP && nM < 12 ? p.fAnno - y.f : null;
+  const letCum = `A fine ${mese}: ${eur(y.f)} nel ${A}${hasP ? `, ${eur(p.f)} nel ${a1}` : ''}${hasQ ? `, ${eur(q.f)} nel ${a0}` : ''}. ${hasP ? `Il ${a1} è chiuso a ${eur(p.fAnno)}` : ''}${hasQ ? `, il ${a0} a ${eur(q.fAnno)}${hasP ? ` (${fr(p.fAnno, q.fAnno)})` : ''}` : ''}.${rimane != null && rimane > 0 ? ` Per eguagliare il ${a1} intero servirebbero ${eur(rimane)} nei mesi che restano; negli stessi mesi del ${a1} sono stati fatturati ${eur(p.fAnno - p.f)}.` : ''} Fatture meno note di credito, IVA esclusa, per data fattura.`;
+  // ---- trimestri
+  const trim = a => [0, 1, 2, 3].map(t => sum(C.fat[a].slice(3 * t, 3 * t + 3).filter((v, i) => a !== A || 3 * t + i < nM)));
+  const inc = [0, 1, 2, 3].filter(t => 3 * t + 3 > nM);
+  const cTrim = svgGrafico({ titolo: 'Fatturato per trimestre, anni a confronto', lab: ['T1', 'T2', 'T3', 'T4'], stack: false, bar: anni.map((a, i) => R1[a].ha ? { n: String(a), c: COL_ANNO[i], v: trim(a), ghost: a === A ? inc : [] } : null).filter(Boolean) });
+  const tA = trim(A), tP = trim(a1);
+  const txtT = t => inc.includes(t) ? (tA[t] ? `T${t + 1}: ${eur(tA[t])} contro ${eur(tP[t])} (solo ${nM - 3 * t} ${nM - 3 * t === 1 ? 'mese' : 'mesi'}: non confrontabile)` : null) : `T${t + 1}: ${eur(tA[t])} contro ${eur(tP[t])} (${fr(tA[t], tP[t])})`;
+  const letTrim = hasP ? [0, 1, 2, 3].map(txtT).filter(Boolean).join(' · ') + `. Il trimestre in corso, se incompleto, è tratteggiato.` : '';
+  // ---- da dove arriva il fatturato
+  const aa = anni.filter(a => R1[a].ha);
+  const cMix = svgGrafico({ titolo: 'Da dove arriva il fatturato, anni a confronto', lab: aa.map(String), h: 260, bar: [{ n: pc || 'Cliente principale', c: '#d9480f', v: aa.map(a => R1[a].pcv) }, { n: 'Altri clienti esteri', c: '#5b7fa6', v: aa.map(a => R1[a].estAltri) }, { n: 'Clienti italiani', c: '#8d7f70', v: aa.map(a => R1[a].itAltri) }], etic: i => kk(R1[aa[i]].f) });
+  const letMix = (pc ? `${pc} pesa ${aa.map(a => `${n0p(R1[a].quota)} nel ${a}`).join(', ')}. Senza di lui il fatturato è ${aa.map(a => eur(R1[a].senza)).join(' → ')}. ` : '') + `Clienti italiani: ${aa.map(a => `${n0p(100 - (R1[a].est || 0))} nel ${a}`).join(', ')}; i primi 5 clienti pesano ${aa.map(a => `${n0p(R1[a].top5)} nel ${a}`).join(', ')}. Periodo: ${lab}. «Estero» = clienti con paese diverso da Italia; i clienti senza paese indicato sono contati in Italia.`;
+  // ---- acquisti e fatturato
+  const ac = anni.filter(a => R1[a].ha && R1[a].acq != null);
+  const cAcq = svgGrafico({ titolo: 'Fatturato e acquisti da fornitori, stessi mesi', lab: ac.map(String), stack: false, h: 260, bar: [{ n: 'Fatturato', c: '#d9480f', v: ac.map(a => R1[a].f) }, { n: 'Acquisti da fornitori (imponibile)', c: '#8d7f70', v: ac.map(a => R1[a].acq) }], etic: i => n1(R1[ac[i]].rapp) + '%' });
+  const fonteTxt = a => C.fonte[a] === 'iva' ? 'registro IVA acquisti' : 'fatture di acquisto del vecchio gestionale';
+  const fontiUniche = [...new Set(ac.map(fonteTxt))];
+  const letAcq = `La percentuale sopra le barre sono gli acquisti ogni 100 € fatturati (${lab}): ${ac.map(a => `${n1(R1[a].rapp)} nel ${a}`).join(', ')}. Anno intero: ${anni.filter(a => R1[a].rappAnno != null && a < A).map(a => `${n1(R1[a].rappAnno)} nel ${a}`).join(', ')}. Non è il margine: sono tutti gli acquisti fatturati dai fornitori (materie, merci, servizi), senza la variazione delle rimanenze: se il magazzino cresce gli acquisti superano i consumi, se cala sono inferiori.${fontiUniche.length > 1 ? ` Fonti diverse: ${ac.map(a => `${a} ${fonteTxt(a)}`).join('; ')} (stesso concetto: fatture registrate, imponibile).` : ''}`;
+  // ---- inizio anno contro oggi
+  const chipN = (a, b, buonoSeSu, neutro) => { const v = variaz(a, b, buonoSeSu, 1); return v ? `<span class="pill ${neutro ? 'plain' : v.cls}">${v.freccia} ${v.testo}</span>` : ''; };
+  const rb = (t, a, c, o, buono, cls) => `<tr class="${cls || ''}"><td>${t}</td><td class="num">${eur(a)}</td><td class="num">${eur(c)}</td><td class="num">${o == null ? '' : eur(o)}</td><td>${chipN(c, a, buono === null ? true : buono, buono === null)}</td></tr>`;
+  const tabB = ap && cn ? `<div class="scroll"><table class="ce"><tr><th>Voce</th><th class="num">1 gen ${A}</th><th class="num">Fine ${MESI3[X.nM - 1]}</th><th class="num">Oggi*</th><th>Variaz.</th></tr>
+    ${rb('Finanziamenti', ap.fin, cn.fin, pos.fin, false)}${rb('Anticipi', ap.ant, cn.ant, pos.s.anticipi, false)}${rb('Scoperti c/c', ap.scop, cn.scop, pos.s.scoperti, false)}${rb('Liquidità', ap.liq, cn.liq, pos.s.liquidita, true)}${rb('<b>PFN bancaria</b>', ap.pfn, cn.pfn, pos.pfnStima, false, 'tot')}
+    ${rb('Fin. soci', ap.soci, cn.soci, pos.soci, false)}${rb('<b>PFN con i soci</b>', ap.pfn + ap.soci, cn.pfn + cn.soci, pos.pfnTotStima, false, 'tot')}${rb('Erario e INPS', ap.trib + ap.prev, X.trib[last] + X.prev[last], null, false)}${rb('Crediti verso clienti', ap.crediti, X.crediti[last], null, null)}
+  </table></div>` : '';
+  const letB = ap && cn ? `Il 1 gennaio è il saldo di apertura caricato in NTS (bilancio ${a1}); «fine ${nomeX}» è l'ultimo mese registrato (contabile), con lo stesso criterio, quindi il confronto è omogeneo. *«Oggi» è la stima di Fiammetta (movimenti della banca) e non entra nella variazione. Il riepilogo consolidato indica una PFN «reale» al 31/12/${a1} di circa ${eur(RIF25.pfn)}: usa criteri di riclassificazione diversi (per esempio gli anticipi SBF Italia su Cassa Padana, senza conto dedicato), per questo qui l'apertura è più bassa. Erario e INPS non comprendono i piani AdER. I saldi sono «come registrati»: i versamenti si registrano dopo l'estratto conto.` : `Servono i saldi di apertura dell'anno e almeno un mese registrato in prima nota.`;
+  // ---- anno per anno
+  const e25 = a1 === 2025, pm = X && X.nM ? (sum(X.pers) + sum(X.persMancante)) / X.nM : null, pmP = e25 ? RIF25.personaleComparabile / 12 : null;
+  const persPct = X && X.nM && sum(X.ric) > 0 ? 100 * (sum(X.pers) + sum(X.persMancante)) / sum(X.ric) : null, persPctP = e25 && p.fAnno > 0 ? 100 * RIF25.personaleComparabile / p.fAnno : null;
+  const cel = v => `<td class="num">${v}</td>`, nd = '<span class="muted">n.d.</span>';
+  const rA = (t, f, fmt, ch1, ch2, cls) => `<tr class="${cls || ''}"><td>${t}</td>${[a0, a1, A].map(a => cel(f(a) == null ? nd : fmt(f(a)))).join('')}<td>${ch1 || ''}</td><td>${ch2 || ''}</td></tr>`;
+  const tabA = `<div class="scroll"><table class="ce"><tr><th>Voce</th><th class="num">${a0}, anno</th><th class="num">${a1}, anno</th><th class="num">${A}, ${lab}</th><th>${a1} su ${a0}</th><th>${A} su ${a1}, ${lab}</th></tr>
+    ${rA('Fatturato', a => a === A ? R1[a].f : R1[a].ha ? R1[a].fAnno : null, eur, hasQ && hasP ? chipN(p.fAnno, q.fAnno, true) : '', hasP ? chipN(y.f, p.f, true) : '')}
+    ${rA('Acquisti da fornitori', a => a === A ? R1[a].acq : R1[a].acqAnno, eur, hasQ && hasP && q.acqAnno && p.acqAnno ? chipN(p.acqAnno, q.acqAnno, false, true) : '', hasP && p.acq != null && y.acq != null ? chipN(y.acq, p.acq, false, true) : '')}
+    ${rA('Acquisti ogni 100 € fatturati', a => a === A ? R1[a].rapp : R1[a].rappAnno, v => n1(v) + ' €', hasQ && hasP && q.rappAnno != null && p.rappAnno != null ? punti(p.rappAnno, q.rappAnno, false) : '', hasP && p.rapp != null && y.rapp != null ? punti(y.rapp, p.rapp, false) : '')}
+    ${rA('Personale al mese', a => a === a1 ? pmP : a === A ? pm : null, eur, '', pm != null && pmP != null ? chipN(pm, pmP, false) : '')}
+    ${rA('Personale su fatturato', a => a === a1 ? persPctP : a === A ? persPct : null, n0p, '', persPct != null && persPctP != null ? punti(persPct, persPctP, false) : '')}
+    ${rA('EBITDA (bilancio)', a => STORICO[a] && STORICO[a].ebitda != null && a < A ? STORICO[a].ebitda : null, eur, '', '')}
+    ${rA('Utile (bilancio)', a => STORICO[a] && a < A ? STORICO[a].utile : null, eur, hasQ && STORICO[a0] && STORICO[a1] ? chipN(STORICO[a1].utile, STORICO[a0].utile, true) : '', '')}
+  </table></div>`;
+  const letA = `Fatturato e acquisti sono sempre fatture: ${a0} e ${a1} dal vecchio gestionale, ${A} da NTS (acquisti: registro IVA). I confronti a destra sono a parità di mesi (${lab}); le colonne ${a0} e ${a1} sono anni interi.${e25 ? ` Personale: il «comparabile» ${a1} di ${eur(RIF25.personaleComparabile)} toglie dicembre ${a1 - 1} e la tredicesima registrati a gennaio (il bilancio dice ${eur(STORICO[2025].personale)}); nel ${A} sono i costi registrati in prima nota${X && X.nM && sum(X.persMancante) > 0 ? ` più una stima per i mesi non ancora registrati (${eur(sum(X.persMancante))})` : ''}${X && X.nM ? `, da gennaio a ${nomeX}` : ''}. Gli oneri finanziari ${a1} (7.699 €) avevano le commissioni SBF tra i servizi, quelli ${A} no: non si confrontano.` : ''} <b>EBITDA e utile ${A}</b> non sono confrontabili finché non ci sono rimanenze, ammortamenti e TFR (bilancio ${A}); fino ad allora il risultato di prima nota (pagina «Mese per mese») serve solo per la direzione.`;
+  const card = (t, graf, lett, extra) => `<div class="card"><h3>${t}</h3>${graf}<div class="small" style="margin-top:8px">${lett}</div>${extra || ''}</div>`;
+  // ---- numeri e controlli
+  const riga = (t, arr, tot) => `<tr><td class="nowrap">${t}</td>${arr.map((v, i) => `<td class="num">${v == null ? '–' : eur(v)}</td>`).join('')}<td class="num">${tot == null ? '' : eur(tot)}</td></tr>`;
+  const righeN = anni.filter(a => R1[a].ha).map(a => riga(`Fatturato ${a}`, C.fat[a].map((v, m) => a === A && m >= nM ? null : v), a === A ? R1[a].f : R1[a].fAnno) + (C.acq[a] ? riga(`Acquisti ${a}`, C.acq[a].map((v, m) => a === A && m >= nM ? null : v), a === A ? R1[a].acq : R1[a].acqAnno) : '')).join('');
+  const topT = anni.filter(a => R1[a].ha).map(a => `<tr><td>${a}</td><td>${R1[a].top.map(([c, v]) => `${esc(C.nomeDi(c))} ${eur(v)}`).join(' · ')}</td></tr>`).join('');
+  const controlli = [];
+  if (STORICO[a1] && STORICO[a1].ricavi && p.ha) controlli.push(`${a1}: fatture ${eur(p.fAnno)}${a1 === 2025 ? ` contro registri vendite ${eur(RIF25.ricavi)} (${p.fAnno - RIF25.ricavi >= 0 ? '+' : '−'}${eur(Math.abs(p.fAnno - RIF25.ricavi))})` : ''} e ricavi di bilancio ${eur(STORICO[a1].ricavi)}.`);
+  if (X && X.nM) { const fPn = sum(C.fat[A].slice(0, X.nM)); controlli.push(`${A}, gennaio–${nomeX}: fatture ${eur(fPn)} contro ricavi in prima nota ${eur(sum(X.ric))} (${fPn - sum(X.ric) >= 0 ? '+' : '−'}${eur(Math.abs(fPn - sum(X.ric)))}: altri ricavi e sfasamenti di registrazione).`); }
+  const tab = `<details class="piano" style="margin-top:14px"><summary><span class="nm">I numeri di tutti i grafici, mese per mese</span><span class="small muted">per le verifiche</span></summary><div class="body"><div class="scroll"><table class="ce"><tr><th>Voce</th>${MESI3.map(l => `<th class="num">${l}</th>`).join('')}<th class="num">${nM >= 12 ? 'anno' : 'periodo'}</th></tr>${righeN}</table></div>
+    <div class="small" style="margin-top:10px"><b>Primi 5 clienti (${lab})</b></div><div class="scroll"><table class="ce">${topT}</table></div>
+    <div class="small" style="margin-top:10px">Acquisti: ${anni.filter(a => C.acq[a]).map(a => `${a} ${fonteTxt(a)}`).join('; ')}.<br>${controlli.map(esc).join('<br>')}</div></div></details>`;
+  return `<div class="head"><h2>Andamento · anno su anno</h2><span class="small muted">${a0}, ${a1} e ${A} a parità di mesi (${lab})</span></div>${andTabs()}
+  <div class="alert"><b>Come leggere questa pagina.</b> Si confrontano gli stessi mesi di anni diversi (${lab}), così la stagionalità non falsa il confronto. <b>Fatturato</b> = fatture di vendita IVA esclusa meno note di credito, per data fattura: nel ${a1} coincide con i registri vendite. <b>Acquisti</b> = fatture dei fornitori IVA esclusa: non sono il costo del venduto, perché manca la variazione delle rimanenze. La <b>contabilità</b> ${a0}-${a1} non è in NTS (parte dal 1° gennaio ${A}): il conto economico completo si confronterà direttamente dalla prima nota dal ${A + 1}; per ora si usano i numeri del bilancio depositato. La freccia è verde se l'indice migliora, rossa se peggiora, grigia se è praticamente fermo o se non c'è un verso «migliore».</div>
+  ${kpi}
+  ${sint.length ? `<div class="card" style="margin-bottom:14px"><h3>In sintesi</h3><div class="small">${sint.join(' ')}</div></div>` : ''}
+  <div class="stack">
+  ${card('Fatturato da inizio anno, anni a confronto', cCum, letCum)}
+  <div class="rowg">${card('Fatturato per trimestre', cTrim, letTrim)}${card('Da dove arriva il fatturato', cMix, letMix)}</div>
+  <div class="rowg">${card('Acquisti e fatturato', cAcq, letAcq)}${card('Inizio anno contro oggi', tabB, letB)}</div>
+  ${card('Anno per anno', tabA, letA)}
+  </div>${tab}`;
+}
+function pageAndamento() { return (S.andTab === 'anno' ? pageAnnoSuAnno : pageAndamentoMese)(); }
 
 // ---------- Banche e PFN ----------
 const fidoDi = (banca, linea) => (S.data.fidi || []).find(f => f.banca === banca && f.linea === linea) || {};
@@ -1761,6 +1970,8 @@ const UI = {
   goA(v, arg, anchor) { S._anchor = anchor; UI.go(v, arg); },
   partite(tab, filtro) { if (tab) { S.partite.tab = tab; S.partite.filtro = 'tutto'; S.partite.cerca = ''; } if (filtro) S.partite.filtro = filtro; render(); },
   andRiprova() { S._andErr = null; S._keepScroll = true; render(); },
+  andTab(t) { S.andTab = t; S._keepScroll = false; render(); },
+  annoRiprova() { S._annoErr = null; S._keepScroll = true; render(); },
   pfFiltro(k) { S.partite.pfFiltro = k; S._keepScroll = true; render(); },
   dett(k) { S.dett = (k && S.dett !== k) ? k : null; S._keepScroll = true; render(); const el = document.getElementById('dett'); if (el && S.dett) { const r = el.getBoundingClientRect(); if (r.top > window.innerHeight * 0.75) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
   async fido(banca, linea, campo, valore) {
